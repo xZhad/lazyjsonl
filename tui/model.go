@@ -44,6 +44,7 @@ type Model struct {
 	filterSaved string // prior filter value before entering filter mode
 	filterErr   error
 	mode        Mode
+	detail      jsonldb.Doc // selected doc in detail view
 	width       int
 	height      int
 }
@@ -162,6 +163,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.mode {
 		case ModeList:
 			return m.updateList(msg)
+		case ModeDetail:
+			m.mode = ModeList
+			return m, nil
 		case ModeFilter:
 			return m.updateFilter(msg)
 		case ModeConfirm:
@@ -242,6 +246,15 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if _, ok := m.selectedDoc(); ok {
 			m.mode = ModeConfirm
+		}
+	case "enter":
+		if d, ok := m.selectedDoc(); ok {
+			m.detail = d
+			m.mode = ModeDetail
+		}
+	case "r":
+		if err := m.col.Reload(); err == nil {
+			m.refresh()
 		}
 	}
 	return m, nil

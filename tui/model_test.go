@@ -321,3 +321,29 @@ func findID(m *Model, id string) (jsonldb.Doc, bool) {
 	}
 	return jsonldb.Doc{}, false
 }
+
+func TestDetailAndReload(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	m.pageSize = 10
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(*Model)
+	if m.mode != ModeDetail {
+		t.Fatalf("mode = %v, want ModeDetail", m.mode)
+	}
+	if m.detail.GetString("id") != "a" {
+		t.Errorf("detail id = %q, want a", m.detail.GetString("id"))
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(*Model)
+	if m.mode != ModeList {
+		t.Errorf("esc should return to list, got %v", m.mode)
+	}
+	// reload is a no-op here but must not error or change count
+	mi, _ = m.Update(key('r'))
+	m = mi.(*Model)
+	if m.result.Count() != 3 {
+		t.Errorf("count after reload = %d, want 3", m.result.Count())
+	}
+}
