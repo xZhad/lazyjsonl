@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/xZhad/jsonldb"
 )
@@ -32,13 +34,38 @@ func Run(opts Options, w io.Writer) error {
 		return err
 	}
 
+	out := w
+	var tmpName, finalName string
+	if opts.Out != "" {
+		f, err := os.CreateTemp(filepath.Dir(opts.Out), ".lazyjsonl-*.tmp")
+		if err != nil {
+			return err
+		}
+		tmpName, finalName = f.Name(), opts.Out
+		defer os.Remove(tmpName)
+		defer f.Close()
+		out = f
+	}
+
 	for _, d := range res.Docs() {
-		if _, err := w.Write(d.Raw()); err != nil {
+		if _, err := out.Write(d.Raw()); err != nil {
 			return err
 		}
-		if _, err := w.Write([]byte{'\n'}); err != nil {
+		if _, err := out.Write([]byte{'\n'}); err != nil {
 			return err
 		}
+	}
+
+	if opts.Out != "" {
+		if f, ok := out.(*os.File); ok {
+			if err := f.Sync(); err != nil {
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		}
+		return os.Rename(tmpName, finalName)
 	}
 	return nil
 }

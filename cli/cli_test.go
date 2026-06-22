@@ -52,3 +52,23 @@ func TestRunBadFilter(t *testing.T) {
 		t.Errorf("expected error for malformed filter")
 	}
 }
+
+func TestRunExportToFile(t *testing.T) {
+	src := fixture(t)
+	out := filepath.Join(filepath.Dir(src), "done.jsonl")
+	var buf bytes.Buffer
+	if err := Run(Options{Path: src, Filter: "done=true", Out: out}, &buf); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("stdout should be empty when Out set, got %q", buf.String())
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read out: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	if len(lines) != 2 {
+		t.Errorf("out has %d lines, want 2", len(lines))
+	}
+}
