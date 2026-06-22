@@ -11,7 +11,7 @@ func TestViewListRendersColumnsAndFooter(t *testing.T) {
 	m, _ := New(fixture(t))
 	defer m.col.Close()
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	for _, want := range []string{"id", "topic", "dur"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("List view missing column %q:\n%s", want, out)
@@ -29,7 +29,7 @@ func TestViewFilterShowsError(t *testing.T) {
 	m.mode = ModeFilter
 	m.filter = "done="
 	m.applyFilter() // sets filterErr, stays ModeFilter
-	out := m.View()
+	out := m.View().Content
 	if !strings.Contains(out, "filter:") {
 		t.Errorf("filter view missing prompt:\n%s", out)
 	}
@@ -63,7 +63,7 @@ func TestViewShowsFilesPane(t *testing.T) {
 	}
 	defer m.col.Close()
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	if !strings.Contains(out, "FILES") {
 		t.Errorf("view missing FILES pane:\n%s", out)
 	}

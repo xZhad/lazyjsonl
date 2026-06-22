@@ -6,11 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/xZhad/jsonldb"
 )
 
-func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+func key(r rune) tea.KeyPressMsg {
+	if r >= 'A' && r <= 'Z' {
+		return tea.KeyPressMsg{Code: rune(r - 'A' + 'a'), Text: string(r), Mod: tea.ModShift}
+	}
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
+}
 
 func TestListNavigation(t *testing.T) {
 	m, _ := New(fixture(t))
@@ -85,7 +90,7 @@ func TestFileSwitching(t *testing.T) {
 	mi, _ := m.Update(key('\t'))
 	_ = mi
 	// J -> next file (b.jsonl), 1 doc, fresh result
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	mi, _ = m.Update(key('J'))
 	m = mi.(*Model)
 	if m.fileIdx != 1 {
 		t.Errorf("fileIdx after J = %d, want 1", m.fileIdx)
@@ -94,13 +99,13 @@ func TestFileSwitching(t *testing.T) {
 		t.Errorf("count after switch = %d, want 1 (b.jsonl)", m.result.Count())
 	}
 	// J again clamps (only 2 files)
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	mi, _ = m.Update(key('J'))
 	m = mi.(*Model)
 	if m.fileIdx != 1 {
 		t.Errorf("fileIdx clamped = %d, want 1", m.fileIdx)
 	}
 	// K -> back to a.jsonl
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	mi, _ = m.Update(key('K'))
 	m = mi.(*Model)
 	if m.fileIdx != 0 || m.result.Count() != 2 {
 		t.Errorf("after K: fileIdx=%d count=%d, want 0/2", m.fileIdx, m.result.Count())
@@ -174,7 +179,7 @@ func TestFilterApplyAndError(t *testing.T) {
 		mi, _ = m.Update(key(r))
 		m = mi.(*Model)
 	}
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(*Model)
 	if m.mode != ModeList {
 		t.Errorf("mode after enter = %v, want ModeList", m.mode)
@@ -190,7 +195,7 @@ func TestFilterApplyAndError(t *testing.T) {
 	mi, _ = m.Update(key('/'))
 	m = mi.(*Model)
 	m.filter = "done="
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(*Model)
 	if m.filterErr == nil {
 		t.Errorf("expected filterErr for bad DSL")
@@ -214,7 +219,7 @@ func TestFilterEscRestores(t *testing.T) {
 		mi, _ = m.Update(key(r))
 		m = mi.(*Model)
 	}
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(*Model)
 	if m.filter != "done=true" {
 		t.Fatalf("filter after apply = %q, want 'done=true'", m.filter)
@@ -243,7 +248,7 @@ func TestFilterEscRestores(t *testing.T) {
 	}
 
 	// Press esc: filter should be restored to filterSaved ("done=true"), mode should be ModeList
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(*Model)
 	if m.mode != ModeList {
 		t.Errorf("mode after esc = %v, want ModeList", m.mode)
@@ -390,7 +395,7 @@ func TestDetailAndReload(t *testing.T) {
 	defer m.col.Close()
 	m.pageSize = 10
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(*Model)
 	if m.mode != ModeDetail {
 		t.Fatalf("mode = %v, want ModeDetail", m.mode)
@@ -398,7 +403,7 @@ func TestDetailAndReload(t *testing.T) {
 	if m.detail.GetString("id") != "a" {
 		t.Errorf("detail id = %q, want a", m.detail.GetString("id"))
 	}
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(*Model)
 	if m.mode != ModeList {
 		t.Errorf("esc should return to list, got %v", m.mode)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 const colWidth = 16
@@ -19,12 +21,12 @@ func cell(s string, w int) string {
 	return s + strings.Repeat(" ", w-len(r))
 }
 
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
 	switch m.mode {
 	case ModeDetail:
-		return m.viewDetail()
+		return tea.NewView(m.viewDetail())
 	default:
-		return m.viewList()
+		return tea.NewView(m.viewList())
 	}
 }
 

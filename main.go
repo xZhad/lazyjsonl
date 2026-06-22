@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/xZhad/lazyjsonl/cli"
 	"github.com/xZhad/lazyjsonl/tui"
 	"golang.org/x/term"
@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer m.Close()
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

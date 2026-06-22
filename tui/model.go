@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -228,7 +228,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch m.mode {
 		case ModeList:
 			return m.updateList(msg)
@@ -244,7 +244,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Clear status on every key except keys that set it (y, e).
 	k := msg.String()
 	if k != "y" && k != "e" {
@@ -367,28 +367,26 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
+func (m *Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
 		m.applyFilter()
 		return m, nil
-	case tea.KeyEsc:
+	case "esc":
 		m.filter = m.filterSaved
 		m.mode = ModeList
 		return m, nil
-	case tea.KeyBackspace:
+	case "backspace":
 		if len(m.filter) > 0 {
 			m.filter = m.filter[:len(m.filter)-1]
 		}
 		return m, nil
-	case tea.KeyRunes:
-		m.filter += string(msg.Runes)
-		return m, nil
-	case tea.KeySpace:
-		m.filter += " "
+	default:
+		if msg.Text != "" {
+			m.filter += msg.Text
+		}
 		return m, nil
 	}
-	return m, nil
 }
 
 func (m *Model) applyFilter() {
@@ -427,7 +425,7 @@ func (m *Model) refresh() {
 	}
 }
 
-func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
 		if d, ok := m.selectedDoc(); ok {
