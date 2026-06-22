@@ -4,7 +4,48 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+
+func TestListNavigation(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	m.pageSize = 2 // 3 docs -> 2 pages
+
+	// down moves cursor
+	mi, _ := m.Update(key('j'))
+	m = mi.(*Model)
+	if m.cursor != 1 {
+		t.Errorf("cursor after j = %d, want 1", m.cursor)
+	}
+	// down clamps within page (page 1 has 2 rows: indices 0,1)
+	mi, _ = m.Update(key('j'))
+	m = mi.(*Model)
+	if m.cursor != 1 {
+		t.Errorf("cursor clamped = %d, want 1", m.cursor)
+	}
+	// next page
+	mi, _ = m.Update(key('l'))
+	m = mi.(*Model)
+	if m.page != 2 {
+		t.Errorf("page after l = %d, want 2", m.page)
+	}
+	if m.cursor != 0 {
+		t.Errorf("cursor should reset to 0 on page change, got %d", m.cursor)
+	}
+	if len(m.pageRows()) != 1 {
+		t.Errorf("page 2 rows = %d, want 1", len(m.pageRows()))
+	}
+	// next page clamps (only 2 pages)
+	mi, _ = m.Update(key('l'))
+	m = mi.(*Model)
+	if m.page != 2 {
+		t.Errorf("page clamped = %d, want 2", m.page)
+	}
+}
 
 func fixture(t *testing.T) string {
 	t.Helper()
@@ -18,6 +59,50 @@ func fixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestFileSwitching(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.jsonl"), []byte("{\"id\":\"a1\"}\n{\"id\":\"a2\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.jsonl"), []byte("{\"id\":\"b1\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { m.col.Close() }()
+
+	// starts on a.jsonl (sorted first), 2 docs
+	if m.result.Count() != 2 {
+		t.Fatalf("initial count = %d, want 2 (a.jsonl)", m.result.Count())
+	}
+	// tab toggles focus
+	mi, _ := m.Update(key('\t'))
+	_ = mi
+	// J -> next file (b.jsonl), 1 doc, fresh result
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	m = mi.(*Model)
+	if m.fileIdx != 1 {
+		t.Errorf("fileIdx after J = %d, want 1", m.fileIdx)
+	}
+	if m.result.Count() != 1 {
+		t.Errorf("count after switch = %d, want 1 (b.jsonl)", m.result.Count())
+	}
+	// J again clamps (only 2 files)
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	m = mi.(*Model)
+	if m.fileIdx != 1 {
+		t.Errorf("fileIdx clamped = %d, want 1", m.fileIdx)
+	}
+	// K -> back to a.jsonl
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	m = mi.(*Model)
+	if m.fileIdx != 0 || m.result.Count() != 2 {
+		t.Errorf("after K: fileIdx=%d count=%d, want 0/2", m.fileIdx, m.result.Count())
+	}
 }
 
 func TestNewModel(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -135,3 +136,79 @@ func (m *Model) visibleColumns(max int) []string {
 	}
 	return m.columns[:max]
 }
+
+func (m *Model) Init() tea.Cmd { return nil }
+
+func (m *Model) pageCount() int {
+	n := m.result.Count()
+	if n == 0 {
+		return 1
+	}
+	return (n + m.pageSize - 1) / m.pageSize
+}
+
+func (m *Model) pageRows() []jsonldb.Doc {
+	return m.result.Page(m.page, m.pageSize).Docs()
+}
+
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		if m.mode == ModeList {
+			return m.updateList(msg)
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := len(m.pageRows())
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.cursor < rows-1 {
+			m.cursor++
+		}
+	case "k", "up":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "l", "right":
+		if m.page < m.pageCount() {
+			m.page++
+			m.cursor = 0
+		}
+	case "h", "left":
+		if m.page > 1 {
+			m.page--
+			m.cursor = 0
+		}
+	case "g":
+		m.page, m.cursor = 1, 0
+	case "G":
+		m.page, m.cursor = m.pageCount(), 0
+	case "tab":
+		if m.focus == FocusTable {
+			m.focus = FocusFiles
+		} else {
+			m.focus = FocusTable
+		}
+	case "J":
+		if m.fileIdx < len(m.files)-1 {
+			m.fileIdx++
+			m.openCurrent()
+		}
+	case "K":
+		if m.fileIdx > 0 {
+			m.fileIdx--
+			m.openCurrent()
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) View() string { return "" }
