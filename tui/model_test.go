@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/xZhad/jsonldb"
 )
 
 func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -287,4 +288,36 @@ func TestColumnSort(t *testing.T) {
 	if rows[0].GetString("id") != "a" { // dur 1500 largest
 		t.Errorf("desc sort first id = %q, want a", rows[0].GetString("id"))
 	}
+}
+
+func TestDeleteRow(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	m.pageSize = 10
+	// cursor on first row (id "a"), delete it
+	mi, _ := m.Update(key('d'))
+	m = mi.(*Model)
+	if m.mode != ModeConfirm {
+		t.Fatalf("mode = %v, want ModeConfirm", m.mode)
+	}
+	mi, _ = m.Update(key('y'))
+	m = mi.(*Model)
+	if m.mode != ModeList {
+		t.Errorf("mode after confirm = %v, want ModeList", m.mode)
+	}
+	if m.result.Count() != 2 {
+		t.Errorf("count after delete = %d, want 2", m.result.Count())
+	}
+	if _, ok := findID(m, "a"); ok {
+		t.Errorf("id a should be deleted")
+	}
+}
+
+func findID(m *Model, id string) (jsonldb.Doc, bool) {
+	for _, d := range m.result.Docs() {
+		if d.GetString("id") == id {
+			return d, true
+		}
+	}
+	return jsonldb.Doc{}, false
 }

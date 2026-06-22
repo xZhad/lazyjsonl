@@ -164,6 +164,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateList(msg)
 		case ModeFilter:
 			return m.updateFilter(msg)
+		case ModeConfirm:
+			return m.updateConfirm(msg)
 		}
 	}
 	return m, nil
@@ -237,6 +239,10 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.result = m.result.SortBy(field, m.sortDesc)
 			m.page, m.cursor = 1, 0
 		}
+	case "d":
+		if _, ok := m.selectedDoc(); ok {
+			m.mode = ModeConfirm
+		}
 	}
 	return m, nil
 }
@@ -275,6 +281,45 @@ func (m *Model) applyFilter() {
 	m.result = res
 	m.page, m.cursor = 1, 0
 	m.mode = ModeList
+}
+
+func (m *Model) selectedDoc() (jsonldb.Doc, bool) {
+	rows := m.pageRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return jsonldb.Doc{}, false
+	}
+	return rows[m.cursor], true
+}
+
+func (m *Model) refresh() {
+	res, err := m.col.Query(m.filter)
+	if err == nil {
+		m.result = res
+	}
+	if m.page > m.pageCount() {
+		m.page = m.pageCount()
+	}
+	if rows := len(m.pageRows()); m.cursor >= rows {
+		m.cursor = rows - 1
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	}
+}
+
+func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		if d, ok := m.selectedDoc(); ok {
+			if err := m.col.DeleteAt(d.Line()); err == nil {
+				m.refresh()
+			}
+		}
+		m.mode = ModeList
+	case "n", "esc":
+		m.mode = ModeList
+	}
+	return m, nil
 }
 
 func (m *Model) View() string { return "" }
