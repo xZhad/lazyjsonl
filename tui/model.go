@@ -27,23 +27,24 @@ const (
 )
 
 type Model struct {
-	files     []string // discovered .jsonl paths
-	fileIdx   int
-	focus     Focus
-	col       *jsonldb.Collection
-	schema    jsonldb.Schema
-	result    *jsonldb.Result
-	columns   []string // visible keys
-	page      int      // 1-based
-	pageSize  int
-	cursor    int // selected row within page
-	colCursor int // selected column index (for sort)
-	sortDesc  bool
-	filter    string
-	filterErr error
-	mode      Mode
-	width     int
-	height    int
+	files       []string // discovered .jsonl paths
+	fileIdx     int
+	focus       Focus
+	col         *jsonldb.Collection
+	schema      jsonldb.Schema
+	result      *jsonldb.Result
+	columns     []string // visible keys
+	page        int      // 1-based
+	pageSize    int
+	cursor      int // selected row within page
+	colCursor   int // selected column index (for sort)
+	sortDesc    bool
+	filter      string
+	filterSaved string // prior filter value before entering filter mode
+	filterErr   error
+	mode        Mode
+	width       int
+	height      int
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -211,6 +212,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openCurrent()
 		}
 	case "/":
+		m.filterSaved = m.filter
 		m.mode = ModeFilter
 		return m, nil
 	}
@@ -223,6 +225,7 @@ func (m *Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyFilter()
 		return m, nil
 	case tea.KeyEsc:
+		m.filter = m.filterSaved
 		m.mode = ModeList
 		return m, nil
 	case tea.KeyBackspace:
@@ -230,11 +233,11 @@ func (m *Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = m.filter[:len(m.filter)-1]
 		}
 		return m, nil
-	case tea.KeyRunes, tea.KeySpace:
+	case tea.KeyRunes:
 		m.filter += string(msg.Runes)
-		if msg.Type == tea.KeySpace {
-			m.filter += " "
-		}
+		return m, nil
+	case tea.KeySpace:
+		m.filter += " "
 		return m, nil
 	}
 	return m, nil

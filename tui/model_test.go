@@ -200,3 +200,53 @@ func TestFilterApplyAndError(t *testing.T) {
 		t.Errorf("should stay in ModeFilter on error, got %v", m.mode)
 	}
 }
+
+func TestFilterEscRestores(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+
+	// Apply an initial filter to have a known prior filter value
+	mi, _ := m.Update(key('/'))
+	m = mi.(*Model)
+	for _, r := range "done=true" {
+		mi, _ = m.Update(key(r))
+		m = mi.(*Model)
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(*Model)
+	if m.filter != "done=true" {
+		t.Fatalf("filter after apply = %q, want 'done=true'", m.filter)
+	}
+	if m.result.Count() != 2 {
+		t.Fatalf("filtered count = %d, want 2", m.result.Count())
+	}
+
+	// Enter filter mode again (filterSaved should be "done=true")
+	mi, _ = m.Update(key('/'))
+	m = mi.(*Model)
+	if m.mode != ModeFilter {
+		t.Fatalf("mode = %v, want ModeFilter", m.mode)
+	}
+	if m.filterSaved != "done=true" {
+		t.Fatalf("filterSaved = %q, want 'done=true'", m.filterSaved)
+	}
+
+	// Type extra characters: "extra" -> filter becomes "done=trueextra"
+	for _, r := range "extra" {
+		mi, _ = m.Update(key(r))
+		m = mi.(*Model)
+	}
+	if m.filter != "done=trueextra" {
+		t.Fatalf("filter after typing = %q, want 'done=trueextra'", m.filter)
+	}
+
+	// Press esc: filter should be restored to filterSaved ("done=true"), mode should be ModeList
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(*Model)
+	if m.mode != ModeList {
+		t.Errorf("mode after esc = %v, want ModeList", m.mode)
+	}
+	if m.filter != "done=true" {
+		t.Errorf("filter after esc = %q, want 'done=true' (restored)", m.filter)
+	}
+}
