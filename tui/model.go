@@ -38,6 +38,7 @@ type Model struct {
 	pageSize    int
 	cursor      int // selected row within page
 	colCursor   int // selected column index (for sort)
+	sortField   string
 	sortDesc    bool
 	filter      string
 	filterSaved string // prior filter value before entering filter mode
@@ -215,6 +216,27 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterSaved = m.filter
 		m.mode = ModeFilter
 		return m, nil
+	case "L":
+		if m.colCursor < len(m.visibleColumns(len(m.columns)))-1 {
+			m.colCursor++
+		}
+	case "H":
+		if m.colCursor > 0 {
+			m.colCursor--
+		}
+	case "s":
+		cols := m.visibleColumns(len(m.columns))
+		if m.colCursor < len(cols) {
+			field := cols[m.colCursor]
+			if m.sortField == field {
+				m.sortDesc = !m.sortDesc
+			} else {
+				m.sortField = field
+				m.sortDesc = false
+			}
+			m.result = m.result.SortBy(field, m.sortDesc)
+			m.page, m.cursor = 1, 0
+		}
 	}
 	return m, nil
 }

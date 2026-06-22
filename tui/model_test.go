@@ -250,3 +250,41 @@ func TestFilterEscRestores(t *testing.T) {
 		t.Errorf("filter after esc = %q, want 'done=true' (restored)", m.filter)
 	}
 }
+
+func TestColumnSort(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	m.pageSize = 10
+	// find the index of "dur" in visible columns; move colCursor there
+	cols := m.visibleColumns(10)
+	durIdx := -1
+	for i, c := range cols {
+		if c == "dur" {
+			durIdx = i
+		}
+	}
+	if durIdx < 0 {
+		t.Fatal("dur not in columns")
+	}
+	for i := 0; i < durIdx; i++ {
+		mi, _ := m.Update(key('L'))
+		m = mi.(*Model)
+	}
+	if m.colCursor != durIdx {
+		t.Fatalf("colCursor = %d, want %d", m.colCursor, durIdx)
+	}
+	// sort ascending by dur
+	mi, _ := m.Update(key('s'))
+	m = mi.(*Model)
+	rows := m.pageRows()
+	if rows[0].GetString("id") != "b" { // dur 900 is smallest
+		t.Errorf("asc sort first id = %q, want b", rows[0].GetString("id"))
+	}
+	// sort again toggles to desc
+	mi, _ = m.Update(key('s'))
+	m = mi.(*Model)
+	rows = m.pageRows()
+	if rows[0].GetString("id") != "a" { // dur 1500 largest
+		t.Errorf("desc sort first id = %q, want a", rows[0].GetString("id"))
+	}
+}
