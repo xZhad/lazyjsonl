@@ -30,7 +30,7 @@ func (m *Model) View() string {
 
 func (m *Model) viewList() string {
 	var b strings.Builder
-	cols := m.visibleColumns(len(m.columns))
+	cols := m.activeColumns()
 
 	// FILES pane (only when browsing multiple files)
 	if len(m.files) > 1 {
@@ -82,6 +82,12 @@ func (m *Model) viewList() string {
 	b.WriteString(fmt.Sprintf("%d records  page %d/%d", m.result.Count(), m.page, m.pageCount()))
 	if m.filter != "" {
 		b.WriteString("  filter: " + m.filter)
+	}
+	if m.status != "" {
+		b.WriteString("  [" + m.status + "]")
+	}
+	if m.showHelp {
+		b.WriteString("\n\nKEYS: j/k move · h/l page · H/L column · s sort · / filter · enter detail · d delete · c columns · y yank · r reload · g/G top/bottom · q quit")
 	}
 
 	// filter input / error line

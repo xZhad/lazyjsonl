@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 
@@ -27,26 +28,30 @@ const (
 )
 
 type Model struct {
-	files       []string // discovered .jsonl paths
-	fileIdx     int
-	focus       Focus
-	col         *jsonldb.Collection
-	schema      jsonldb.Schema
-	result      *jsonldb.Result
-	columns     []string // visible keys
-	page        int      // 1-based
-	pageSize    int
-	cursor      int // selected row within page
-	colCursor   int // selected column index (for sort)
-	sortField   string
-	sortDesc    bool
-	filter      string
-	filterSaved string // prior filter value before entering filter mode
-	filterErr   error
-	mode        Mode
-	detail      jsonldb.Doc // selected doc in detail view
-	width       int
-	height      int
+	files          []string // discovered .jsonl paths
+	fileIdx        int
+	focus          Focus
+	col            *jsonldb.Collection
+	schema         jsonldb.Schema
+	result         *jsonldb.Result
+	columns        []string // visible keys
+	page           int      // 1-based
+	pageSize       int
+	cursor         int // selected row within page
+	colCursor      int // selected column index (for sort)
+	sortField      string
+	sortDesc       bool
+	filter         string
+	filterSaved    string // prior filter value before entering filter mode
+	filterErr      error
+	mode           Mode
+	detail         jsonldb.Doc // selected doc in detail view
+	width          int
+	height         int
+	showAllColumns bool
+	showHelp       bool
+	defaultCap     int
+	status         string
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -82,12 +87,13 @@ func New(path string) (*Model, error) {
 		return nil, fmt.Errorf("no .jsonl files found in %s", path)
 	}
 	m := &Model{
-		files:    files,
-		fileIdx:  0,
-		focus:    FocusTable,
-		page:     1,
-		pageSize: 20,
-		mode:     ModeList,
+		files:      files,
+		fileIdx:    0,
+		focus:      FocusTable,
+		page:       1,
+		pageSize:   20,
+		mode:       ModeList,
+		defaultCap: 8,
 	}
 	if len(files) > 1 {
 		m.focus = FocusFiles
@@ -138,6 +144,27 @@ func (m *Model) visibleColumns(max int) []string {
 		return m.columns
 	}
 	return m.columns[:max]
+}
+
+func (m *Model) activeColumns() []string {
+	if m.showAllColumns {
+		return m.columns
+	}
+	return m.visibleColumns(m.defaultCap)
+}
+
+func copyToClipboard(b []byte) error {
+	cmd := exec.Command("pbcopy")
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	in.Write(b)
+	in.Close()
+	return cmd.Wait()
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -222,8 +249,23 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterSaved = m.filter
 		m.mode = ModeFilter
 		return m, nil
+	case "c":
+		m.showAllColumns = !m.showAllColumns
+		if m.colCursor >= len(m.activeColumns()) {
+			m.colCursor = 0
+		}
+	case "?":
+		m.showHelp = !m.showHelp
+	case "y":
+		if d, ok := m.selectedDoc(); ok {
+			if err := copyToClipboard(d.Raw()); err != nil {
+				m.status = "clipboard unavailable"
+			} else {
+				m.status = "yanked"
+			}
+		}
 	case "L":
-		if m.colCursor < len(m.visibleColumns(len(m.columns)))-1 {
+		if m.colCursor < len(m.activeColumns())-1 {
 			m.colCursor++
 		}
 	case "H":
@@ -231,7 +273,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.colCursor--
 		}
 	case "s":
-		cols := m.visibleColumns(len(m.columns))
+		cols := m.activeColumns()
 		if m.colCursor < len(cols) {
 			field := cols[m.colCursor]
 			if m.sortField == field {

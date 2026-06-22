@@ -313,6 +313,31 @@ func TestDeleteRow(t *testing.T) {
 	}
 }
 
+func TestColumnToggleAndHelp(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	full := len(m.columns)
+	_ = m.columns // unchanged; cap default is 8 so all 4 show
+	// force a small cap to see toggle effect
+	m.defaultCap = 2
+	if len(m.visibleColumns(m.defaultCap)) != 2 {
+		t.Fatalf("expected capped 2")
+	}
+	mi, _ := m.Update(key('c'))
+	m = mi.(*Model)
+	if !m.showAllColumns {
+		t.Errorf("c should toggle showAllColumns on")
+	}
+	if len(m.activeColumns()) != full {
+		t.Errorf("showAll should reveal all %d columns, got %d", full, len(m.activeColumns()))
+	}
+	mi, _ = m.Update(key('?'))
+	m = mi.(*Model)
+	if !m.showHelp {
+		t.Errorf("? should toggle help")
+	}
+}
+
 func findID(m *Model, id string) (jsonldb.Doc, bool) {
 	for _, d := range m.result.Docs() {
 		if d.GetString("id") == id {
