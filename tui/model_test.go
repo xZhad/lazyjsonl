@@ -156,3 +156,47 @@ func TestNewFromDirectory(t *testing.T) {
 		t.Errorf("files[0] = %q, want a.jsonl (sorted)", m.files[0])
 	}
 }
+
+func TestFilterApplyAndError(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+
+	// enter filter mode
+	mi, _ := m.Update(key('/'))
+	m = mi.(*Model)
+	if m.mode != ModeFilter {
+		t.Fatalf("mode = %v, want ModeFilter", m.mode)
+	}
+	// type "done=true"
+	for _, r := range "done=true" {
+		mi, _ = m.Update(key(r))
+		m = mi.(*Model)
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(*Model)
+	if m.mode != ModeList {
+		t.Errorf("mode after enter = %v, want ModeList", m.mode)
+	}
+	if m.result.Count() != 2 {
+		t.Errorf("filtered count = %d, want 2", m.result.Count())
+	}
+	if m.filterErr != nil {
+		t.Errorf("unexpected filterErr: %v", m.filterErr)
+	}
+
+	// bad filter: keeps prior result, sets error
+	mi, _ = m.Update(key('/'))
+	m = mi.(*Model)
+	m.filter = "done="
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(*Model)
+	if m.filterErr == nil {
+		t.Errorf("expected filterErr for bad DSL")
+	}
+	if m.result.Count() != 2 {
+		t.Errorf("result should be unchanged on parse error, got %d", m.result.Count())
+	}
+	if m.mode != ModeFilter {
+		t.Errorf("should stay in ModeFilter on error, got %v", m.mode)
+	}
+}

@@ -157,8 +157,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
-		if m.mode == ModeList {
+		switch m.mode {
+		case ModeList:
 			return m.updateList(msg)
+		case ModeFilter:
+			return m.updateFilter(msg)
 		}
 	}
 	return m, nil
@@ -207,8 +210,46 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fileIdx--
 			m.openCurrent()
 		}
+	case "/":
+		m.mode = ModeFilter
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m *Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.applyFilter()
+		return m, nil
+	case tea.KeyEsc:
+		m.mode = ModeList
+		return m, nil
+	case tea.KeyBackspace:
+		if len(m.filter) > 0 {
+			m.filter = m.filter[:len(m.filter)-1]
+		}
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		m.filter += string(msg.Runes)
+		if msg.Type == tea.KeySpace {
+			m.filter += " "
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) applyFilter() {
+	res, err := m.col.Query(m.filter)
+	if err != nil {
+		m.filterErr = err
+		return // keep prior result, stay in ModeFilter
+	}
+	m.filterErr = nil
+	m.result = res
+	m.page, m.cursor = 1, 0
+	m.mode = ModeList
 }
 
 func (m *Model) View() string { return "" }
