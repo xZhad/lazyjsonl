@@ -335,3 +335,5 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) Close() error { return m.col.Close() }
+
