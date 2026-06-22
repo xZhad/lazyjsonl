@@ -87,7 +87,7 @@ func (m *Model) viewList() string {
 		b.WriteString("  [" + m.status + "]")
 	}
 	if m.showHelp {
-		b.WriteString("\n\nKEYS: j/k move · h/l page · H/L column · s sort · / filter · enter detail · d delete · c columns · y yank · r reload · g/G top/bottom · q quit")
+		b.WriteString("\n\nKEYS: j/k move · h/l page · H/L column · s sort · / filter · enter detail · d delete · c columns · y yank · e export · r reload · g/G top/bottom · q quit")
 	}
 
 	// filter input / error line

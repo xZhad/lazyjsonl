@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -345,6 +346,43 @@ func findID(m *Model, id string) (jsonldb.Doc, bool) {
 		}
 	}
 	return jsonldb.Doc{}, false
+}
+
+func TestExportKey(t *testing.T) {
+	p := fixture(t)
+	m, err := New(p)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.col.Close()
+	m.pageSize = 10
+
+	// Press 'e' to export current view
+	mi, _ := m.Update(key('e'))
+	m = mi.(*Model)
+
+	// status should be set to "exported to ..."
+	if m.status == "" {
+		t.Errorf("status should be set after export, got empty")
+	}
+	if !strings.HasPrefix(m.status, "exported to ") {
+		t.Errorf("status = %q, want prefix 'exported to '", m.status)
+	}
+
+	// The export file should exist in the same dir as the source
+	dir := filepath.Dir(p)
+	exportPath := filepath.Join(dir, "s.export.jsonl")
+	data, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("export file not found: %v", err)
+	}
+
+	// Count lines (each doc is one line)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	wantLines := m.result.Count()
+	if len(lines) != wantLines {
+		t.Errorf("export file has %d lines, want %d", len(lines), wantLines)
+	}
 }
 
 func TestDetailAndReload(t *testing.T) {

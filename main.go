@@ -36,15 +36,26 @@ func parseArgs(args []string) (cli.Options, bool, error) {
 			opts.Out = args[i+1]
 			explicitCLI = true
 			i += 2
-		default:
-			if opts.Path == "" {
-				opts.Path = a
+		case "--output":
+			if i+1 >= len(args) {
+				return opts, false, errors.New("--output needs a value")
 			}
+			opts.Output = args[i+1]
+			explicitCLI = true
+			i += 2
+		default:
+			if len(a) > 2 && a[:2] == "--" {
+				return opts, false, fmt.Errorf("unknown flag: %s", a)
+			}
+			if opts.Path != "" {
+				return opts, false, fmt.Errorf("unexpected argument: %s", a)
+			}
+			opts.Path = a
 			i++
 		}
 	}
 	if opts.Path == "" {
-		return opts, false, errors.New("usage: lazyjsonl <file.jsonl|dir> [--filter DSL] [--count] [--out FILE]")
+		return opts, false, errors.New("usage: lazyjsonl <file.jsonl|dir> [--filter DSL] [--count] [--out FILE] [--output FORMAT]")
 	}
 	runCLI := explicitCLI || !term.IsTerminal(int(os.Stdout.Fd()))
 	return opts, runCLI, nil

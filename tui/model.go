@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/xZhad/jsonldb"
@@ -121,7 +122,11 @@ func (m *Model) openCurrent() error {
 	m.col = c
 	m.schema = c.Schema()
 	m.result = res
-	m.columns = defaultColumns(m.schema, 8)
+	cap := m.defaultCap
+	if cap == 0 {
+		cap = 8
+	}
+	m.columns = defaultColumns(m.schema, cap)
 	m.filter = ""
 	m.filterErr = nil
 	m.page, m.cursor, m.colCursor = 1, 0, 0
@@ -167,6 +172,43 @@ func copyToClipboard(b []byte) error {
 	return cmd.Wait()
 }
 
+// exportCurrentView writes all docs in m.result atomically to a sibling file
+// named <basename-without-ext>.export.jsonl in the same directory as m.files[m.fileIdx].
+func (m *Model) exportCurrentView() error {
+	src := m.files[m.fileIdx]
+	dir := filepath.Dir(src)
+	base := filepath.Base(src)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	dest := filepath.Join(dir, stem+".export.jsonl")
+
+	tmp, err := os.CreateTemp(dir, ".lazyjsonl-export-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	for _, d := range m.result.Docs() {
+		if _, err := tmp.Write(d.Raw()); err != nil {
+			tmp.Close()
+			return err
+		}
+		if _, err := tmp.Write([]byte{'\n'}); err != nil {
+			tmp.Close()
+			return err
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, dest)
+}
+
 func (m *Model) Init() tea.Cmd { return nil }
 
 func (m *Model) pageCount() int {
@@ -203,8 +245,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Clear status on every key except keys that set it (y, e).
+	k := msg.String()
+	if k != "y" && k != "e" {
+		m.status = ""
+	}
+
 	rows := len(m.pageRows())
-	switch msg.String() {
+	switch k {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
@@ -238,12 +286,16 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "J":
 		if m.fileIdx < len(m.files)-1 {
 			m.fileIdx++
-			m.openCurrent()
+			if err := m.openCurrent(); err != nil {
+				m.status = "open failed"
+			}
 		}
 	case "K":
 		if m.fileIdx > 0 {
 			m.fileIdx--
-			m.openCurrent()
+			if err := m.openCurrent(); err != nil {
+				m.status = "open failed"
+			}
 		}
 	case "/":
 		m.filterSaved = m.filter
@@ -263,6 +315,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "yanked"
 			}
+		}
+	case "e":
+		src := m.files[m.fileIdx]
+		base := filepath.Base(src)
+		ext := filepath.Ext(base)
+		stem := strings.TrimSuffix(base, ext)
+		exportBase := stem + ".export.jsonl"
+		if err := m.exportCurrentView(); err != nil {
+			m.status = "export failed"
+		} else {
+			m.status = "exported to " + exportBase
 		}
 	case "L":
 		if m.colCursor < len(m.activeColumns())-1 {
@@ -295,7 +358,9 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeDetail
 		}
 	case "r":
-		if err := m.col.Reload(); err == nil {
+		if err := m.col.Reload(); err != nil {
+			m.status = "reload failed"
+		} else {
 			m.refresh()
 		}
 	}
@@ -366,7 +431,9 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
 		if d, ok := m.selectedDoc(); ok {
-			if err := m.col.DeleteAt(d.Line()); err == nil {
+			if err := m.col.DeleteAt(d.Line()); err != nil {
+				m.status = "delete failed"
+			} else {
 				m.refresh()
 			}
 		}
