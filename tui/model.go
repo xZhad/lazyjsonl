@@ -1338,14 +1338,19 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.groupCursor < len(m.groupRows) {
 			gr := m.groupRows[m.groupCursor]
-			// Record a real DSL filter so it shows in the filter input and esc
-			// clears it. Re-query it; if it can't reproduce the exact group
-			// (e.g. a numeric-looking string), keep the exact subset.
-			m.filter = m.groupField + "=" + groupFilterLiteral(gr.key)
-			if res, err := m.col.Query(m.filter); err == nil && res.Count() == gr.count {
-				m.result = res
+			// Combine with any existing filter (grouping already operates on the
+			// current result, so the new clause is ANDed). Record the combined
+			// DSL so the filter input shows all clauses and esc clears them.
+			clause := m.groupField + "=" + groupFilterLiteral(gr.key)
+			combined := clause
+			if m.filter != "" {
+				combined = "(" + m.filter + ") " + clause
+			}
+			m.filter = combined
+			if res, err := m.col.Query(combined); err == nil && res.Count() == gr.count {
+				m.result = res // DSL reproduced the exact group
 			} else {
-				m.result = gr.res
+				m.result = gr.res // fall back to the exact subset
 			}
 			m.filterErr = nil
 			m.page, m.cursor = 1, 0

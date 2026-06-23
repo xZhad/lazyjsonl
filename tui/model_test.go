@@ -943,3 +943,44 @@ func TestGroupFilterAndChartEntry(t *testing.T) {
 		t.Errorf("after esc: filter=%q count=%d, want \"\"/3", m.filter, m.result.Count())
 	}
 }
+
+func TestStackedGroupFilters(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"cat":"books","region":"north"}
+{"cat":"books","region":"south"}
+{"cat":"books","region":"north"}
+{"cat":"toys","region":"north"}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 90, Height: 18})
+	m.focus = FocusTable
+
+	// group by cat → filter books (3)
+	m.openGroup("cat")
+	m.groupCursor = 0 // books (top count)
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.result.Count() != 3 || m.filter != `cat="books"` {
+		t.Fatalf("after cat filter: count=%d filter=%q", m.result.Count(), m.filter)
+	}
+	// group the books subset by region → filter north → books AND north (2)
+	m.openGroup("region")
+	for i, r := range m.groupRows {
+		if r.key == "north" {
+			m.groupCursor = i
+		}
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.result.Count() != 2 {
+		t.Errorf("stacked count = %d, want 2 (books AND north)", m.result.Count())
+	}
+	if m.filter != `(cat="books") region="north"` {
+		t.Errorf("combined filter = %q, want (cat=\"books\") region=\"north\"", m.filter)
+	}
+	// esc clears all
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.filter != "" || m.result.Count() != 4 {
+		t.Errorf("after esc: filter=%q count=%d, want \"\"/4", m.filter, m.result.Count())
+	}
+}
