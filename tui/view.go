@@ -255,10 +255,21 @@ func (m *Model) tablePane(w, h int, active bool) string {
 			}
 		})
 
+	// Pad the table to a fixed region (pane content minus the title line) so
+	// every page fills the pane identically — the bottom border stays put and
+	// short last pages don't shift the layout up.
+	tableRegion := innerH - 1
+	if tableRegion < 1 {
+		tableRegion = 1
+	}
 	tblLines := strings.Split(tbl.String(), "\n")
-	sb := scrollbar(len(tblLines), m.result.Count(), m.pageSize, (m.page-1)*m.pageSize)
-	body := make([]string, len(tblLines))
-	for i, ln := range tblLines {
+	sb := scrollbar(tableRegion, m.result.Count(), m.pageSize, (m.page-1)*m.pageSize)
+	body := make([]string, tableRegion)
+	for i := 0; i < tableRegion; i++ {
+		ln := ""
+		if i < len(tblLines) {
+			ln = tblLines[i]
+		}
 		sc := " "
 		if i < len(sb) {
 			sc = sb[i]

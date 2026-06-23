@@ -372,8 +372,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWheel(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// rows that fit the table pane: height − title − footer − border − pane-title − header
-		ps := msg.Height - 6
+		// rows that fit the records pane: total height minus the app title,
+		// footer, pane borders (2), pane title, and the header+rule (2).
+		ps := msg.Height - 7
 		if ps < 1 {
 			ps = 1
 		}
