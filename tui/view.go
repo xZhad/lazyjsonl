@@ -101,12 +101,12 @@ func (m *Model) filesPane(w, h int, active bool) string {
 			lines = append(lines, styleMuted.Render("  "+cell(name, inner-2)))
 		}
 	}
-	return pane(active).Width(inner).Height(innerH).MaxHeight(innerH).Render(strings.Join(lines, "\n"))
+	// lipgloss .Width/.Height are TOTAL (border included) → pass full w/h
+	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) tablePane(w, h int, active bool) string {
 	inner := w - 2
-	innerH := h - 2
 	cols := m.activeColumns()
 	colW := 16
 	if n := len(cols); n > 0 {
@@ -157,7 +157,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 			lines = append(lines, row)
 		}
 	}
-	return pane(active).Width(inner).Height(innerH).MaxHeight(innerH).Render(strings.Join(lines, "\n"))
+	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
 }
 
 func rowCells(d jsonldb.Doc, cols []string) []string {
@@ -206,7 +206,7 @@ func (m *Model) renderFooter(w int) string {
 func (m *Model) renderDetail(w, h int) string {
 	title := paneTitle(true, "RECORD")
 	body := styleText.Render(prettyJSON(m.detail.Raw()))
-	box := pane(true).Width(w - 2).Height(h - 3).MaxHeight(h - 3).Render(title + "\n" + body)
+	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
 	footer := styleFooter.Width(w).Render(" " + keyHint("esc", "back") + keyHint("q", "quit"))
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
 }

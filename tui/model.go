@@ -361,11 +361,11 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "exported to " + exportBase
 		}
-	case "L":
+	case "L", "shift+right":
 		if m.colCursor < len(m.activeColumns())-1 {
 			m.colCursor++
 		}
-	case "H":
+	case "H", "shift+left":
 		if m.colCursor > 0 {
 			m.colCursor--
 		}
