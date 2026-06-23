@@ -39,10 +39,11 @@ const (
 	chartScatter
 	chartSparkline
 	chartTimeSeries
+	chartHeatmap
 )
 
 // chartTypes are the offered chart kinds, in picker order (index = const above).
-var chartTypes = []string{"bar", "line", "scatter", "sparkline", "time series"}
+var chartTypes = []string{"bar", "line", "scatter", "sparkline", "time series", "heatmap (cross-tab)"}
 
 // pickRow is one candidate column in the column picker (top-level or nested).
 type pickRow struct {
@@ -1387,6 +1388,13 @@ func (m *Model) chartNextPrompt() (title string, items []string, need bool) {
 		}
 		if len(p) == 1 {
 			return "Y column (numeric)", m.numericColumns(), true
+		}
+	case chartHeatmap:
+		if len(p) == 0 {
+			return "X column (category)", m.activeColumns(), true
+		}
+		if len(p) == 1 {
+			return "Y column (category)", m.activeColumns(), true
 		}
 	}
 	return "", nil, false

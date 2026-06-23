@@ -592,6 +592,8 @@ func (m *Model) renderChart(w, h int) string {
 		body = m.buildSparkline(chartW, chartH)
 	case chartTimeSeries:
 		body = m.buildTimeSeries(chartW, chartH)
+	case chartHeatmap:
+		body = m.buildHeatmap(chartW, chartH)
 	}
 	title := paneTitle(true, "CHART · "+chartTypes[m.chartType]+" · "+strings.Join(m.chartPicks, " / "))
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
@@ -794,6 +796,100 @@ func (m *Model) buildTimeSeries(w, h int) string {
 	}
 	ts.DrawBraille()
 	return ts.View()
+}
+
+// cellText returns a column's value as a plain string (for cross-tab keys).
+func (m *Model) cellText(d jsonldb.Doc, col string) string {
+	var v any
+	var ok bool
+	if strings.Contains(col, ".") {
+		v, ok = d.Path(col)
+	} else {
+		v, ok = d.Get(col)
+	}
+	if !ok {
+		return ""
+	}
+	return scalarStr(v)
+}
+
+// distinctVals returns up to capN first-seen distinct values of col.
+func (m *Model) distinctVals(col string, capN int) []string {
+	if capN < 1 {
+		capN = 1
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range m.result.Docs() {
+		v := m.cellText(d, col)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+		if len(out) >= capN {
+			break
+		}
+	}
+	return out
+}
+
+// buildHeatmap renders a labeled cross-tab of counts for two categorical
+// columns, each cell shaded by count intensity (synthwave ramp).
+func (m *Model) buildHeatmap(w, h int) string {
+	xcol, ycol := m.chartPicks[0], m.chartPicks[1]
+	const labelW, cellW = 12, 8
+	xs := m.distinctVals(xcol, (w-labelW)/cellW)
+	ys := m.distinctVals(ycol, h-2)
+	if len(xs) == 0 || len(ys) == 0 {
+		return styleMuted.Render("no data to cross-tab")
+	}
+	xi := map[string]int{}
+	for i, v := range xs {
+		xi[v] = i
+	}
+	yi := map[string]int{}
+	for i, v := range ys {
+		yi[v] = i
+	}
+	counts := make([][]int, len(ys))
+	for i := range counts {
+		counts[i] = make([]int, len(xs))
+	}
+	maxC := 1
+	for _, d := range m.result.Docs() {
+		a, okx := xi[m.cellText(d, xcol)]
+		b, oky := yi[m.cellText(d, ycol)]
+		if okx && oky {
+			counts[b][a]++
+			if counts[b][a] > maxC {
+				maxC = counts[b][a]
+			}
+		}
+	}
+	ramp := lipgloss.Blend1D(12, cBg, cIdle, cViolet, cMagenta)
+
+	var sb strings.Builder
+	sb.WriteString(styleMuted.Render(cell(clip(ycol+"\\"+xcol, labelW-1), labelW)))
+	for _, x := range xs {
+		sb.WriteString(styleHeader.Render(cell(clip(x, cellW-1), cellW)))
+	}
+	sb.WriteString("\n")
+	for r, y := range ys {
+		sb.WriteString(styleText.Render(cell(clip(y, labelW-1), labelW)))
+		for c := range xs {
+			n := counts[r][c]
+			bg := ramp[n*(len(ramp)-1)/maxC]
+			txt := ""
+			if n > 0 {
+				txt = fmt.Sprintf("%d", n)
+			}
+			sb.WriteString(lipgloss.NewStyle().Background(bg).Foreground(cBright).
+				Width(cellW).Align(lipgloss.Center).Render(txt))
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func scalarStr(v any) string {

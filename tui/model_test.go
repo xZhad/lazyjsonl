@@ -870,3 +870,33 @@ func TestGroupMeasure(t *testing.T) {
 		t.Errorf("after key sort, first = %q, want a", m.groupRows[0].key)
 	}
 }
+
+func TestHeatmapChart(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"p":"a","r":"x"}
+{"p":"a","r":"y"}
+{"p":"b","r":"x"}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.focus = FocusTable
+	// heatmap wizard needs two category picks
+	m.chartType = chartHeatmap
+	m.chartPicks = nil
+	if _, _, need := m.chartNextPrompt(); !need {
+		t.Error("heatmap should prompt for X")
+	}
+	m.chartPicks = []string{"p"}
+	if _, _, need := m.chartNextPrompt(); !need {
+		t.Error("heatmap should prompt for Y")
+	}
+	m.chartPicks = []string{"p", "r"}
+	if _, _, need := m.chartNextPrompt(); need {
+		t.Error("heatmap ready after X,Y")
+	}
+	if out := m.buildHeatmap(60, 10); out == "" || !strings.Contains(out, "r\\p") {
+		t.Errorf("heatmap render missing axis label:\n%s", out)
+	}
+}
