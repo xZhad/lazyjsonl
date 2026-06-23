@@ -60,7 +60,7 @@ func (m *Model) render() string {
 	if m.mode == ModeColumns {
 		return m.renderColumns(w, h)
 	}
-	if m.mode == ModeDetail {
+	if m.mode == ModeDetail || m.mode == ModeDetailSearch {
 		return m.renderDetail(w, h)
 	}
 	title := m.renderTitle(w)
@@ -507,8 +507,14 @@ func (m *Model) renderDetail(w, h int) string {
 		lines = append(lines, content+sc)
 	}
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(strings.Join(lines, "\n"))
-	hint := " " + keyHint("j/k", "scroll") + keyHint("d/u", "½ page") +
-		keyHint("g/G", "top/end") + keyHint("esc", "back") + keyHint("q", "quit")
+	var hint string
+	if m.mode == ModeDetailSearch {
+		hint = styleKey.Render(" find ") + m.detailInput.View() +
+			styleMuted.Render("   ↵ keep · esc clear")
+	} else {
+		hint = " " + keyHint("j/k", "scroll") + keyHint("/", "find") + keyHint("n/N", "next/prev") +
+			keyHint("g/G", "top/end") + keyHint("esc", "back") + keyHint("q", "quit")
+	}
 	footer := styleFooter.Width(w).Render(hint)
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
 }

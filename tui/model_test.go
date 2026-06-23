@@ -660,3 +660,40 @@ func TestJumpToRecord(t *testing.T) {
 		t.Errorf("jump to 3 (pageSize 1): page=%d cursor=%d, want 3/0", m.page, m.cursor)
 	}
 }
+
+func TestDetailSearch(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"id":"a","role":"user","note":"role play"}`+"\n"), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.focus = FocusTable
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // open detail
+	if m.mode != ModeDetail {
+		t.Fatalf("mode = %v, want ModeDetail", m.mode)
+	}
+	m = send(m, kp('/')) // search
+	if m.mode != ModeDetailSearch {
+		t.Fatalf("mode = %v, want ModeDetailSearch", m.mode)
+	}
+	for _, r := range "role" {
+		m = send(m, kp(r))
+	}
+	if m.detailQuery != "role" {
+		t.Errorf("detailQuery = %q, want role", m.detailQuery)
+	}
+	// "role" appears in key "role", value "user"? no — in key "role" and note "role play": 2+
+	plain := prettyJSON(m.detail.Raw())
+	if got := len(matchRanges(plain, "role")); got < 2 {
+		t.Errorf("matchRanges(role) = %d, want >=2", got)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // keep
+	if m.mode != ModeDetail {
+		t.Errorf("after enter mode = %v, want ModeDetail", m.mode)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // esc exits detail
+	if m.mode != ModeList {
+		t.Errorf("after esc mode = %v, want ModeList", m.mode)
+	}
+}

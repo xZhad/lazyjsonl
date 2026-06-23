@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -26,6 +27,7 @@ const (
 	ModeColumns
 	ModeFileSearch
 	ModeJump
+	ModeDetailSearch
 )
 
 // pickRow is one candidate column in the column picker (top-level or nested).
@@ -86,6 +88,9 @@ type Model struct {
 	help help.Model
 	// jump-to-record
 	jumpInput textinput.Model
+	// detail search
+	detailInput textinput.Model
+	detailQuery string
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -155,7 +160,15 @@ func New(path string) (*Model, error) {
 	ji.SetStyles(filterInputStyles())
 	m.jumpInput = ji
 
+	di := textinput.New()
+	di.Prompt = ""
+	di.SetVirtualCursor(true)
+	di.SetStyles(filterInputStyles())
+	m.detailInput = di
+
 	m.detailVP = viewport.New()
+	m.detailVP.HighlightStyle = lipgloss.NewStyle().Foreground(cBg).Background(cYellow)
+	m.detailVP.SelectedHighlightStyle = lipgloss.NewStyle().Foreground(cBg).Background(cMagenta)
 
 	if err := m.openCurrent(); err != nil {
 		return nil, err
@@ -350,6 +363,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFileSearch(msg)
 		case ModeJump:
 			return m.updateJump(msg)
+		case ModeDetailSearch:
+			return m.updateDetailSearch(msg)
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -366,6 +381,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ModeJump:
 		var cmd tea.Cmd
 		m.jumpInput, cmd = m.jumpInput.Update(msg)
+		return m, cmd
+	case ModeDetailSearch:
+		var cmd tea.Cmd
+		m.detailInput, cmd = m.detailInput.Update(msg)
 		return m, cmd
 	case ModeDetail:
 		var cmd tea.Cmd
@@ -607,8 +626,10 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if d, ok := m.selectedDoc(); ok {
 			m.detail = d
+			m.detailQuery = ""
 			m.sizeDetailVP()
 			m.detailVP.SetContent(detailContent(d))
+			m.detailVP.ClearHighlights()
 			m.detailVP.GotoTop()
 			m.mode = ModeDetail
 		}
@@ -636,10 +657,80 @@ func (m *Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "G":
 		m.detailVP.GotoBottom()
 		return m, nil
+	case "/":
+		m.detailInput.SetValue(m.detailQuery)
+		m.detailInput.CursorEnd()
+		cmd := m.detailInput.Focus()
+		m.mode = ModeDetailSearch
+		return m, cmd
+	case "n":
+		if m.detailQuery != "" {
+			m.detailVP.HighlightNext()
+		}
+		return m, nil
+	case "N":
+		if m.detailQuery != "" {
+			m.detailVP.HighlightPrevious()
+		}
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.detailVP, cmd = m.detailVP.Update(msg)
 	return m, cmd
+}
+
+// updateDetailSearch highlights matches in the record live as the user types;
+// enter keeps them (n/N cycle in the detail view), esc clears.
+func (m *Model) updateDetailSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.detailInput.Blur()
+		m.mode = ModeDetail
+		return m, nil
+	case "esc":
+		m.detailInput.Blur()
+		m.detailQuery = ""
+		m.detailVP.ClearHighlights()
+		m.mode = ModeDetail
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.detailInput, cmd = m.detailInput.Update(msg)
+	m.detailQuery = m.detailInput.Value()
+	m.applyDetailHighlights()
+	return m, cmd
+}
+
+// applyDetailHighlights recomputes match byte-ranges against the plain record
+// JSON (matching the viewport's ANSI-stripped content) and sets them.
+func (m *Model) applyDetailHighlights() {
+	m.detailVP.ClearHighlights()
+	if m.detailQuery == "" {
+		return
+	}
+	plain := prettyJSON(m.detail.Raw())
+	ranges := matchRanges(plain, m.detailQuery)
+	if len(ranges) > 0 {
+		m.detailVP.SetHighlights(ranges)
+	}
+}
+
+// matchRanges returns case-insensitive [start,end] byte ranges of q in s.
+func matchRanges(s, q string) [][]int {
+	if q == "" {
+		return nil
+	}
+	ls, lq := strings.ToLower(s), strings.ToLower(q)
+	var out [][]int
+	for i := 0; ; {
+		j := strings.Index(ls[i:], lq)
+		if j < 0 {
+			break
+		}
+		out = append(out, []int{i + j, i + j + len(q)})
+		i += j + len(q)
+	}
+	return out
 }
 
 // updateFileSearch filters the files list live. up/down (or ctrl-n/p) move the
