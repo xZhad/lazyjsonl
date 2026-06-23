@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -86,17 +87,18 @@ func gradientRule(w int) string {
 	return b.String()
 }
 
-// helpStyles themes the bubbles help component to the synthwave palette.
-func helpStyles() help.Styles {
-	s := help.DefaultDarkStyles()
-	s.ShortKey = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	s.ShortDesc = lipgloss.NewStyle().Foreground(cMuted)
-	s.ShortSeparator = lipgloss.NewStyle().Foreground(cIdle)
-	s.FullKey = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	s.FullDesc = lipgloss.NewStyle().Foreground(cFg)
-	s.FullSeparator = lipgloss.NewStyle().Foreground(cIdle)
-	s.Ellipsis = lipgloss.NewStyle().Foreground(cIdle)
-	return s
+// helpStyles themes the bubbles help component to the synthwave palette. Every
+// sub-style carries an explicit background (bg) so the bar/overlay color stays
+// uniform — lipgloss won't bleed an outer background across the help's own
+// styled (fg-reset) spans.
+func helpStyles(bg color.Color) help.Styles {
+	key := lipgloss.NewStyle().Foreground(cCyan).Background(bg).Bold(true)
+	desc := lipgloss.NewStyle().Foreground(cMuted).Background(bg)
+	sep := lipgloss.NewStyle().Foreground(cIdle).Background(bg)
+	return help.Styles{
+		ShortKey: key, ShortDesc: desc, ShortSeparator: sep, Ellipsis: sep,
+		FullKey: key, FullDesc: desc, FullSeparator: sep,
+	}
 }
 
 // filterInputStyles themes the filter text input to the synthwave palette.

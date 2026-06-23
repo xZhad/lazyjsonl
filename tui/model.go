@@ -33,8 +33,16 @@ const (
 	ModeChart
 )
 
-// chartTypes are the offered chart kinds, in picker order.
-var chartTypes = []string{"bar (group counts)", "line", "sparkline"}
+const (
+	chartBar = iota
+	chartLine
+	chartScatter
+	chartSparkline
+	chartTimeSeries
+)
+
+// chartTypes are the offered chart kinds, in picker order (index = const above).
+var chartTypes = []string{"bar", "line", "scatter", "sparkline", "time series"}
 
 // pickRow is one candidate column in the column picker (top-level or nested).
 type pickRow struct {
@@ -103,9 +111,9 @@ type Model struct {
 	groupRows   []groupRow
 	groupCursor int
 	// charts
-	chartStep   int // 0 pick type · 1 pick column · 2 render
-	chartType   int // index into chartTypes
-	chartCol    string
+	chartStep   int      // 0 pick type · 1 picking fields · 2 render
+	chartType   int      // index into chartTypes
+	chartPicks  []string // selected fields/options for this chart, in order
 	chartCursor int
 }
 
@@ -181,7 +189,7 @@ func New(path string) (*Model, error) {
 	m.fileInput = fi
 
 	h := help.New()
-	h.Styles = helpStyles()
+	h.Styles = helpStyles(cBar)
 	m.help = h
 
 	ji := textinput.New()
@@ -669,6 +677,7 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "v":
 		m.chartStep = 0
 		m.chartCursor = 0
+		m.chartPicks = nil
 		m.mode = ModeChart
 	case "d":
 		if _, ok := m.selectedDoc(); ok {
@@ -1245,6 +1254,11 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "a":
 		m.mode = ModeList
+	case "v": // chart these group counts directly
+		m.chartType = chartBar
+		m.chartPicks = []string{m.groupField, "count"}
+		m.chartStep = 2
+		m.mode = ModeChart
 	case "j", "down":
 		if m.groupCursor < len(m.groupRows)-1 {
 			m.groupCursor++
@@ -1269,7 +1283,46 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateChart drives the chart wizard: pick type → pick column → render.
+// chartNextPrompt returns the next field-selection prompt given the picks made
+// so far. need=false means enough is selected to render.
+func (m *Model) chartNextPrompt() (title string, items []string, need bool) {
+	p := m.chartPicks
+	switch m.chartType {
+	case chartBar:
+		switch len(p) {
+		case 0:
+			return "Category column", m.activeColumns(), true
+		case 1:
+			return "Measure", []string{"count", "sum", "avg", "min", "max"}, true
+		case 2:
+			if p[1] == "count" {
+				return "", nil, false
+			}
+			return "Value column (numeric)", m.numericColumns(), true
+		}
+	case chartLine, chartSparkline:
+		if len(p) == 0 {
+			return "Numeric column", m.numericColumns(), true
+		}
+	case chartScatter:
+		if len(p) == 0 {
+			return "X column (numeric)", m.numericColumns(), true
+		}
+		if len(p) == 1 {
+			return "Y column (numeric)", m.numericColumns(), true
+		}
+	case chartTimeSeries:
+		if len(p) == 0 {
+			return "Time column", m.dateColumns(), true
+		}
+		if len(p) == 1 {
+			return "Y column (numeric)", m.numericColumns(), true
+		}
+	}
+	return "", nil, false
+}
+
+// updateChart drives the chart wizard: pick type → pick fields → render.
 func (m *Model) updateChart(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.chartStep {
 	case 0: // pick chart type
@@ -1286,19 +1339,28 @@ func (m *Model) updateChart(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			m.chartType = m.chartCursor
-			m.chartStep = 1
+			m.chartPicks = nil
 			m.chartCursor = 0
+			if _, _, need := m.chartNextPrompt(); need {
+				m.chartStep = 1
+			} else {
+				m.chartStep = 2
+			}
 		}
-	case 1: // pick column
-		cols := m.activeColumns()
+	case 1: // pick a field
+		_, items, _ := m.chartNextPrompt()
 		switch msg.String() {
 		case "esc":
-			m.chartStep = 0
+			if len(m.chartPicks) > 0 {
+				m.chartPicks = m.chartPicks[:len(m.chartPicks)-1]
+			} else {
+				m.chartStep = 0
+			}
 			m.chartCursor = 0
 		case "q":
 			m.mode = ModeList
 		case "j", "down":
-			if m.chartCursor < len(cols)-1 {
+			if m.chartCursor < len(items)-1 {
 				m.chartCursor++
 			}
 		case "k", "up":
@@ -1306,15 +1368,22 @@ func (m *Model) updateChart(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.chartCursor--
 			}
 		case "enter":
-			if m.chartCursor < len(cols) {
-				m.chartCol = cols[m.chartCursor]
-				m.chartStep = 2
+			if m.chartCursor < len(items) {
+				m.chartPicks = append(m.chartPicks, items[m.chartCursor])
+				m.chartCursor = 0
+				if _, _, need := m.chartNextPrompt(); !need {
+					m.chartStep = 2
+				}
 			}
 		}
 	case 2: // rendered chart
 		switch msg.String() {
 		case "esc":
-			m.chartStep = 1 // back to column pick
+			if len(m.chartPicks) > 0 { // step back to re-pick the last field
+				m.chartPicks = m.chartPicks[:len(m.chartPicks)-1]
+			}
+			m.chartCursor = 0
+			m.chartStep = 1
 		case "q":
 			m.mode = ModeList
 		}

@@ -761,22 +761,74 @@ func TestChartWizard(t *testing.T) {
 	if m.mode != ModeChart || m.chartStep != 0 {
 		t.Fatalf("after v: mode=%v step=%d", m.mode, m.chartStep)
 	}
-	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick type (bar)
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick type = bar
 	if m.chartStep != 1 {
 		t.Fatalf("after type pick: step=%d, want 1", m.chartStep)
 	}
-	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick first column
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick category column
+	if m.chartStep != 1 {
+		t.Fatalf("after category: step=%d, want 1 (measure prompt)", m.chartStep)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick measure = count → done
 	if m.chartStep != 2 {
-		t.Fatalf("after col pick: step=%d, want 2", m.chartStep)
+		t.Fatalf("after measure: step=%d, want 2", m.chartStep)
+	}
+	if len(m.chartPicks) != 2 || m.chartPicks[1] != "count" {
+		t.Errorf("chartPicks = %v, want [<col> count]", m.chartPicks)
 	}
 	if out := m.buildBarChart(40, 10); out == "" {
 		t.Error("empty bar chart render")
 	}
-	if out := m.buildSparkline(40, 5); out == "" {
-		t.Error("empty sparkline render")
-	}
-	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // back to column pick
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // back: drop measure, re-pick
 	if m.chartStep != 1 {
 		t.Errorf("after esc: step=%d, want 1", m.chartStep)
+	}
+}
+
+func TestChartTypesScatterTimeSeries(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"x":1,"y":9,"t":"2026-06-21T10:00:00Z"}
+{"x":2,"y":5,"t":"2026-06-22T10:00:00Z"}
+{"x":3,"y":7,"t":"2026-06-23T10:00:00Z"}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.focus = FocusTable
+
+	if got := m.numericColumns(); len(got) < 2 {
+		t.Errorf("numericColumns = %v, want >=2 (x,y)", got)
+	}
+	if got := m.dateColumns(); len(got) != 1 || got[0] != "t" {
+		t.Errorf("dateColumns = %v, want [t]", got)
+	}
+
+	// scatter x,y
+	m.chartType = chartScatter
+	m.chartPicks = []string{"x", "y"}
+	if out := m.buildScatter(40, 12); out == "" {
+		t.Error("empty scatter")
+	}
+	// time series t,y
+	m.chartType = chartTimeSeries
+	m.chartPicks = []string{"t", "y"}
+	if out := m.buildTimeSeries(40, 12); out == "" {
+		t.Error("empty time series")
+	}
+
+	// scatter wizard needs two numeric picks
+	m.chartType = chartScatter
+	m.chartPicks = nil
+	if _, _, need := m.chartNextPrompt(); !need {
+		t.Error("scatter should prompt for X")
+	}
+	m.chartPicks = []string{"x"}
+	if _, _, need := m.chartNextPrompt(); !need {
+		t.Error("scatter should prompt for Y")
+	}
+	m.chartPicks = []string{"x", "y"}
+	if _, _, need := m.chartNextPrompt(); need {
+		t.Error("scatter ready after X,Y")
 	}
 }

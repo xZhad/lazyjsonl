@@ -18,6 +18,8 @@ import (
 	"github.com/NimbleMarkets/ntcharts/v2/barchart"
 	"github.com/NimbleMarkets/ntcharts/v2/canvas"
 	"github.com/NimbleMarkets/ntcharts/v2/canvas/runes"
+	"github.com/NimbleMarkets/ntcharts/v2/linechart"
+	"github.com/NimbleMarkets/ntcharts/v2/linechart/timeserieslinechart"
 	"github.com/NimbleMarkets/ntcharts/v2/linechart/wavelinechart"
 	"github.com/NimbleMarkets/ntcharts/v2/sparkline"
 	"github.com/xZhad/jsonldb"
@@ -445,7 +447,7 @@ func (m *Model) renderStats(w, h int) string {
 func (m *Model) renderGroup(w, h int) string {
 	var b strings.Builder
 	b.WriteString(styleApp.Render("Group by ") + styleHeader.Render(m.groupField) +
-		styleMuted.Render(fmt.Sprintf("   %d groups · ↵ filter · esc close", len(m.groupRows))) + "\n")
+		styleMuted.Render(fmt.Sprintf("   %d groups · ↵ filter · v chart · esc close", len(m.groupRows))) + "\n")
 	b.WriteString(gradientRule(54) + "\n")
 	listH := h - 10
 	if listH < 4 {
@@ -494,16 +496,64 @@ func (m *Model) numericValues(field string, capN int) []float64 {
 	return out
 }
 
+// numericColumns / dateColumns sniff column types from the current page.
+func (m *Model) numericColumns() []string {
+	var out []string
+	for _, c := range m.activeColumns() {
+		for _, d := range m.pageRows() {
+			if _, ok := docFloat(d, c); ok {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (m *Model) dateColumns() []string {
+	var out []string
+	for _, c := range m.activeColumns() {
+		for _, d := range m.pageRows() {
+			if _, ok := docTime(d, c); ok {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// docTime parses a timestamp at field (plain or dotted) using the date layouts.
+func docTime(d jsonldb.Doc, field string) (time.Time, bool) {
+	var v any
+	var ok bool
+	if strings.Contains(field, ".") {
+		v, ok = d.Path(field)
+	} else {
+		v, ok = d.Get(field)
+	}
+	s, isStr := v.(string)
+	if !ok || !isStr {
+		return time.Time{}, false
+	}
+	for _, l := range dateLayouts {
+		if t, err := time.Parse(l, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
 func (m *Model) renderChart(w, h int) string {
-	switch m.chartStep {
-	case 0:
+	if m.chartStep == 0 {
 		return m.chartPicker(w, h, "Chart type", chartTypes)
-	case 1:
-		return m.chartPicker(w, h, "Chart column", m.activeColumns())
+	}
+	if m.chartStep == 1 {
+		title, items, _ := m.chartNextPrompt()
+		return m.chartPicker(w, h, title, items)
 	}
 	// step 2 — render the chart full-screen
-	chartW := w - 4
-	chartH := h - 4
+	chartW, chartH := w-4, h-4
 	if chartW < 8 {
 		chartW = 8
 	}
@@ -512,14 +562,18 @@ func (m *Model) renderChart(w, h int) string {
 	}
 	var body string
 	switch m.chartType {
-	case 0:
+	case chartBar:
 		body = m.buildBarChart(chartW, chartH)
-	case 1:
+	case chartLine:
 		body = m.buildLineChart(chartW, chartH)
-	case 2:
+	case chartScatter:
+		body = m.buildScatter(chartW, chartH)
+	case chartSparkline:
 		body = m.buildSparkline(chartW, chartH)
+	case chartTimeSeries:
+		body = m.buildTimeSeries(chartW, chartH)
 	}
-	title := paneTitle(true, "CHART · "+chartTypes[m.chartType]+" · "+m.chartCol)
+	title := paneTitle(true, "CHART · "+chartTypes[m.chartType]+" · "+strings.Join(m.chartPicks, " / "))
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
 	footer := styleFooter.Width(w).Render(" " + keyHint("esc", "back") + keyHint("q", "quit"))
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
@@ -529,6 +583,11 @@ func (m *Model) chartPicker(w, h int, title string, items []string) string {
 	var b strings.Builder
 	b.WriteString(styleApp.Render(title) + styleMuted.Render("   ↑↓ select · ↵ next · esc back") + "\n")
 	b.WriteString(gradientRule(42) + "\n")
+	if len(items) == 0 {
+		b.WriteString(styleMuted.Render("  (no matching columns)"))
+		box := styleOverlay.Render(b.String())
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+	}
 	listH := h - 10
 	if listH < 3 {
 		listH = 3
@@ -550,24 +609,49 @@ func (m *Model) chartPicker(w, h int, title string, items []string) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
+// barMeasure computes a group's measure value from picks [cat, measure, valCol?].
+func (m *Model) barMeasure(res *jsonldb.Result) float64 {
+	measure, valCol := "count", ""
+	if len(m.chartPicks) > 1 {
+		measure = m.chartPicks[1]
+	}
+	if len(m.chartPicks) > 2 {
+		valCol = m.chartPicks[2]
+	}
+	var v float64
+	switch measure {
+	case "sum":
+		v, _ = res.Sum(valCol)
+	case "avg":
+		v, _ = res.Avg(valCol)
+	case "min":
+		v, _ = res.Min(valCol)
+	case "max":
+		v, _ = res.Max(valCol)
+	default:
+		v = float64(res.Count())
+	}
+	return v
+}
+
 func (m *Model) buildBarChart(w, h int) string {
-	groups := m.result.GroupBy(m.chartCol)
+	groups := m.result.GroupBy(m.chartPicks[0])
 	type kv struct {
 		k string
-		n int
+		v float64
 	}
 	rows := make([]kv, 0, len(groups))
 	for k, res := range groups {
-		rows = append(rows, kv{k, res.Count()})
+		rows = append(rows, kv{k, m.barMeasure(res)})
 	}
 	sort.Slice(rows, func(a, b int) bool {
-		if rows[a].n != rows[b].n {
-			return rows[a].n > rows[b].n
+		if rows[a].v != rows[b].v {
+			return rows[a].v > rows[b].v
 		}
 		return rows[a].k < rows[b].k
 	})
 	if len(rows) > 12 {
-		rows = rows[:12] // keep the chart legible
+		rows = rows[:12]
 	}
 	bc := barchart.New(w, h)
 	data := make([]barchart.BarData, len(rows))
@@ -575,7 +659,7 @@ func (m *Model) buildBarChart(w, h int) string {
 		st := lipgloss.NewStyle().Foreground(barPalette[i%len(barPalette)])
 		data[i] = barchart.BarData{
 			Label:  clip(r.k, 10),
-			Values: []barchart.BarValue{{Name: r.k, Value: float64(r.n), Style: st}},
+			Values: []barchart.BarValue{{Name: r.k, Value: r.v, Style: st}},
 		}
 	}
 	bc.PushAll(data)
@@ -584,9 +668,10 @@ func (m *Model) buildBarChart(w, h int) string {
 }
 
 func (m *Model) buildSparkline(w, h int) string {
-	vals := m.numericValues(m.chartCol, w*2)
+	col := m.chartPicks[0]
+	vals := m.numericValues(col, w*2)
 	if len(vals) == 0 {
-		return styleMuted.Render("‘" + m.chartCol + "’ has no numeric values")
+		return styleMuted.Render("‘" + col + "’ has no numeric values")
 	}
 	sl := sparkline.New(w, h, sparkline.WithStyle(lipgloss.NewStyle().Foreground(cCyan)))
 	sl.PushAll(vals)
@@ -594,11 +679,7 @@ func (m *Model) buildSparkline(w, h int) string {
 	return sl.View()
 }
 
-func (m *Model) buildLineChart(w, h int) string {
-	vals := m.numericValues(m.chartCol, w)
-	if len(vals) == 0 {
-		return styleMuted.Render("‘" + m.chartCol + "’ has no numeric values")
-	}
+func minMax(vals []float64) (float64, float64) {
 	lo, hi := vals[0], vals[0]
 	for _, v := range vals {
 		if v < lo {
@@ -608,9 +689,19 @@ func (m *Model) buildLineChart(w, h int) string {
 			hi = v
 		}
 	}
-	if lo == hi { // avoid a zero-height range
-		hi = lo + 1
+	if lo == hi {
+		hi = lo + 1 // avoid a zero-height range
 	}
+	return lo, hi
+}
+
+func (m *Model) buildLineChart(w, h int) string {
+	col := m.chartPicks[0]
+	vals := m.numericValues(col, w)
+	if len(vals) == 0 {
+		return styleMuted.Render("‘" + col + "’ has no numeric values")
+	}
+	lo, hi := minMax(vals)
 	wl := wavelinechart.New(w, h)
 	wl.SetViewXYRange(0, float64(len(vals)-1), lo, hi)
 	wl.SetStyles(runes.ArcLineStyle, lipgloss.NewStyle().Foreground(cCyan))
@@ -619,6 +710,70 @@ func (m *Model) buildLineChart(w, h int) string {
 	}
 	wl.Draw()
 	return wl.View()
+}
+
+func (m *Model) buildScatter(w, h int) string {
+	xc, yc := m.chartPicks[0], m.chartPicks[1]
+	var xs, ys []float64
+	for _, d := range m.result.Docs() {
+		xv, ok1 := docFloat(d, xc)
+		yv, ok2 := docFloat(d, yc)
+		if ok1 && ok2 {
+			xs = append(xs, xv)
+			ys = append(ys, yv)
+			if len(xs) >= 2000 {
+				break
+			}
+		}
+	}
+	if len(xs) == 0 {
+		return styleMuted.Render("no rows with both ‘" + xc + "’ and ‘" + yc + "’ numeric")
+	}
+	xlo, xhi := minMax(xs)
+	ylo, yhi := minMax(ys)
+	lc := linechart.New(w, h, xlo, xhi, ylo, yhi)
+	lc.DrawXYAxisAndLabel()
+	st := lipgloss.NewStyle().Foreground(cMagenta)
+	for i := range xs {
+		lc.DrawRuneWithStyle(canvas.Float64Point{X: xs[i], Y: ys[i]}, '•', st)
+	}
+	return lc.View()
+}
+
+func (m *Model) buildTimeSeries(w, h int) string {
+	tc, yc := m.chartPicks[0], m.chartPicks[1]
+	type tp struct {
+		t time.Time
+		v float64
+	}
+	var pts []tp
+	for _, d := range m.result.Docs() {
+		t, ok1 := docTime(d, tc)
+		v, ok2 := docFloat(d, yc)
+		if ok1 && ok2 {
+			pts = append(pts, tp{t, v})
+		}
+	}
+	if len(pts) == 0 {
+		return styleMuted.Render("no rows with time ‘" + tc + "’ and numeric ‘" + yc + "’")
+	}
+	sort.Slice(pts, func(a, b int) bool { return pts[a].t.Before(pts[b].t) })
+	ys := make([]float64, len(pts))
+	for i, p := range pts {
+		ys[i] = p.v
+	}
+	ylo, yhi := minMax(ys)
+	ts := timeserieslinechart.New(w, h)
+	ts.SetTimeRange(pts[0].t, pts[len(pts)-1].t)
+	ts.SetViewTimeRange(pts[0].t, pts[len(pts)-1].t)
+	ts.SetYRange(ylo, yhi)
+	ts.SetViewYRange(ylo, yhi)
+	ts.SetStyle(lipgloss.NewStyle().Foreground(cCyan))
+	for _, p := range pts {
+		ts.Push(timeserieslinechart.TimePoint{Time: p.t, Value: p.v})
+	}
+	ts.DrawBraille()
+	return ts.View()
 }
 
 func scalarStr(v any) string {
@@ -655,6 +810,7 @@ func (m *Model) renderFooter(w int) string {
 			return styleFooter.Width(w).Render(s)
 		}
 	}
+	m.help.Styles = helpStyles(cBar)
 	m.help.SetWidth(w)
 	left := " " + m.help.ShortHelpView(m.shortKeys()) // bar() truncates to fit
 	right := ""
@@ -769,6 +925,7 @@ func (m *Model) renderDetail(w, h int) string {
 
 func (m *Model) renderHelp(w, h int) string {
 	m.help.ShowAll = true
+	m.help.Styles = helpStyles(cBg)
 	var b strings.Builder
 	b.WriteString(styleApp.Render("lazyjsonl") + styleMuted.Render(" · keybindings") + "\n")
 	b.WriteString(gradientRule(60) + "\n\n")
