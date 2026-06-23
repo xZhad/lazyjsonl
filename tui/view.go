@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -158,6 +159,17 @@ func (m *Model) tablePane(w, h int, active bool) string {
 	pageDocs := m.pageRows()
 	allCols := m.activeColumns()
 
+	// Empty state: a centered, styled message instead of a bare grid.
+	if len(pageDocs) == 0 {
+		msg := "no records"
+		if m.filter != "" {
+			msg = "no matches for ‘" + m.filter + "’ — esc to clear"
+		}
+		title := paneTitle(active, "RECORDS")
+		box := lipgloss.Place(inner, innerH-1, lipgloss.Center, lipgloss.Center, styleMuted.Render(msg))
+		return pane(active).Width(w).Height(h).MaxHeight(h).Render(padTo(title, inner) + "\n" + box)
+	}
+
 	// Window of columns starting at colOffset (horizontal scroll). Greedily keep
 	// the columns that fit contentW (each costs width + 2 padding + 1 separator),
 	// so short-value columns aren't starved to a "…" header by lipgloss.
@@ -214,7 +226,11 @@ func (m *Model) tablePane(w, h int, active bool) string {
 				return styleSel.Padding(0, 1)
 			case row < len(pageDocs) && col < len(cols):
 				_, st := cellValue(pageDocs[row], cols[col])
-				return st.Padding(0, 1)
+				st = st.Padding(0, 1)
+				if row%2 == 1 { // zebra striping
+					st = st.Background(cZebra)
+				}
+				return st
 			default:
 				return styleText.Padding(0, 1)
 			}
@@ -257,10 +273,51 @@ func cellValue(d jsonldb.Doc, col string) (string, lipgloss.Style) {
 	if !ok {
 		return "", styleText // key absent → blank cell
 	}
-	if raw == nil {
-		return "null", styleNull // explicit JSON null → visible, dim italic
+	switch x := raw.(type) {
+	case nil:
+		return "∅", styleNull // explicit JSON null
+	case bool:
+		if x {
+			return "✓", styleBoolTrue
+		}
+		return "✗", styleBoolFls
 	}
 	return scalarStr(raw), valueStyle(raw)
+}
+
+// colGlyph returns a small type indicator for a column, sniffed from the first
+// present, non-null value on the current page. Strings get no glyph (the common
+// case stays uncluttered); typed columns get a cue.
+func (m *Model) colGlyph(c string) string {
+	for _, d := range m.pageRows() {
+		var v any
+		var ok bool
+		if strings.Contains(c, ".") {
+			v, ok = d.Path(c)
+		} else {
+			v, ok = d.Get(c)
+		}
+		if !ok || v == nil {
+			continue
+		}
+		switch x := v.(type) {
+		case bool:
+			return "⊙"
+		case json.Number, float64, int, int64:
+			return "#"
+		case map[string]any:
+			return "◇"
+		case []any:
+			return "▦"
+		case string:
+			if isDateString(x) {
+				return "◷"
+			}
+			return ""
+		}
+		return ""
+	}
+	return ""
 }
 
 func valueStyle(v any) lipgloss.Style {
@@ -364,9 +421,57 @@ func (m *Model) renderFooter(w int) string {
 	return bar(w, left, right)
 }
 
-// detailContent pretty-prints a record for the detail viewport.
+var (
+	reJSONKey = regexp.MustCompile(`^("(?:[^"\\]|\\.)*")\s*:\s*(.*)$`)
+	reJSONNum = regexp.MustCompile(`^-?\d+(\.\d+)?([eE][+-]?\d+)?$`)
+)
+
+// detailContent pretty-prints a record with JSON syntax highlighting for the
+// detail viewport (keys cyan, strings pink, dates orange, numbers cyan,
+// bools green/red, null dim, punctuation dim).
 func detailContent(d jsonldb.Doc) string {
-	return styleText.Render(prettyJSON(d.Raw()))
+	lines := strings.Split(prettyJSON(d.Raw()), "\n")
+	for i, ln := range lines {
+		lines[i] = colorizeJSONLine(ln)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func colorizeJSONLine(ln string) string {
+	trimmed := strings.TrimLeft(ln, " ")
+	indent := ln[:len(ln)-len(trimmed)]
+	if mm := reJSONKey.FindStringSubmatch(trimmed); mm != nil {
+		return indent + styleJKey.Render(mm[1]) + styleJPunct.Render(": ") + colorizeJSONValue(mm[2])
+	}
+	return indent + colorizeJSONValue(trimmed)
+}
+
+func colorizeJSONValue(s string) string {
+	comma := ""
+	if strings.HasSuffix(s, ",") {
+		comma = styleJPunct.Render(",")
+		s = s[:len(s)-1]
+	}
+	switch {
+	case s == "", s == "{", s == "}", s == "[", s == "]":
+		return styleJPunct.Render(s) + comma
+	case s == "true":
+		return styleBoolTrue.Render(s) + comma
+	case s == "false":
+		return styleBoolFls.Render(s) + comma
+	case s == "null":
+		return styleNull.Render(s) + comma
+	case strings.HasPrefix(s, `"`):
+		st := styleJStr
+		if isDateString(strings.Trim(s, `"`)) {
+			st = styleDate
+		}
+		return st.Render(s) + comma
+	case reJSONNum.MatchString(s):
+		return styleNum.Render(s) + comma
+	default:
+		return styleText.Render(s) + comma
+	}
 }
 
 func (m *Model) renderDetail(w, h int) string {

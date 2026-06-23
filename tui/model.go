@@ -943,6 +943,9 @@ func (m *Model) headerLabel(c string) string {
 	if dp := m.drillPrefix(); dp != "" && strings.HasPrefix(c, dp+".") {
 		label = strings.TrimPrefix(c, dp)
 	}
+	if g := m.colGlyph(c); g != "" {
+		label = g + " " + label
+	}
 	if c == m.sortField {
 		if m.sortDesc {
 			label += " ▼"

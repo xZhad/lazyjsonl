@@ -581,8 +581,8 @@ func TestNullCellValue(t *testing.T) {
 	defer m.col.Close()
 	d := m.pageRows()[0]
 	txt, st := cellValue(d, "a")
-	if txt != "null" {
-		t.Errorf("null cell text = %q, want null", txt)
+	if txt != "∅" {
+		t.Errorf("null cell text = %q, want ∅", txt)
 	}
 	if st.Render("null") != styleNull.Render("null") {
 		t.Errorf("null cell style not styleNull")

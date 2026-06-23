@@ -25,6 +25,7 @@ var (
 	cMuted   = lipgloss.Color("#8A6FB8") // muted purple (secondary text)
 	cIdle    = lipgloss.Color("#54368E") // idle pane border
 	cOrange  = lipgloss.Color("#FF9E64") // dates / timestamps
+	cZebra   = lipgloss.Color("#190E30") // subtle alternating-row background
 )
 
 var (
@@ -56,6 +57,11 @@ var (
 	styleNull     = lipgloss.NewStyle().Foreground(cMuted).Italic(true)
 	styleObj      = lipgloss.NewStyle().Foreground(cYellow) // maps/arrays — hints "divable"
 	styleDate     = lipgloss.NewStyle().Foreground(cOrange) // date/time-looking strings
+
+	// JSON syntax highlighting in the detail view
+	styleJKey   = lipgloss.NewStyle().Foreground(cCyan)
+	styleJStr   = lipgloss.NewStyle().Foreground(cFg)
+	styleJPunct = lipgloss.NewStyle().Foreground(cIdle)
 )
 
 // pane returns a box style: a thick violet border when focused, a dim rounded
