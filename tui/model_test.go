@@ -449,8 +449,8 @@ func TestDrillIntoColumn(t *testing.T) {
 	if !strings.Contains(got, "message.role") || !strings.Contains(got, "message.content") {
 		t.Fatalf("dive columns = %v", m.columns)
 	}
-	if len(m.drillCrumb) != 1 || m.drillCrumb[0] != "message" {
-		t.Errorf("crumb = %v", m.drillCrumb)
+	if len(m.drillPath) != 1 || m.drillPath[0] != "message" {
+		t.Errorf("crumb = %v", m.drillPath)
 	}
 	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	m = mi.(*Model)
@@ -488,5 +488,107 @@ func TestPickerInDrillListsSubfields(t *testing.T) {
 		if !keys[want] {
 			t.Errorf("missing pick row %q (got %v)", want, m.pickList)
 		}
+	}
+}
+
+func send(m *Model, msg tea.Msg) *Model { mi, _ := m.Update(msg); return mi.(*Model) }
+
+func TestMultiLevelDrillTrim(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"id":"a","message":{"role":"user","usage":{"input":10,"output":20}}}
+{"id":"b","message":{"role":"assistant","usage":{"input":5,"output":7}}}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m.showAllColumns = true
+	m.columns = []string{"id", "message"}
+	m.colCursor = 1
+	m = send(m, key(' ')) // dive into message → message.role, message.usage, ...
+	// focus message.usage and dive again
+	for i, c := range m.columns {
+		if c == "message.usage" {
+			m.colCursor = i
+		}
+	}
+	m = send(m, key(' ')) // dive into message.usage → message.usage.input/output
+	if got := strings.Join(m.columns, ","); !strings.Contains(got, "message.usage.input") {
+		t.Fatalf("level-2 columns = %v", m.columns)
+	}
+	if pfx := m.drillPrefix(); pfx != "message.usage" {
+		t.Errorf("drillPrefix = %q, want message.usage", pfx)
+	}
+	if cr := strings.Join(m.drillCrumbs(), "/"); cr != "message/usage" {
+		t.Errorf("drillCrumbs = %q, want message/usage", cr)
+	}
+	// header trim drops the full prefix → ".input" not "message.usage.input"
+	if pfx := m.drillPrefix(); !strings.HasPrefix(strings.TrimPrefix("message.usage.input", pfx), ".") {
+		t.Errorf("trim of message.usage.input by %q did not yield .input", pfx)
+	}
+}
+
+func TestFileSearch(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"alpha.jsonl", "beta.jsonl", "gamma.jsonl"} {
+		os.WriteFile(filepath.Join(dir, n), []byte(`{"x":1}`+"\n"), 0644)
+	}
+	m, _ := New(dir)
+	defer m.col.Close()
+	m.focus = FocusFiles
+	m = send(m, key('/'))
+	if m.mode != ModeFileSearch {
+		t.Fatalf("mode = %v, want ModeFileSearch", m.mode)
+	}
+	for _, r := range "bet" {
+		m = send(m, key(r))
+	}
+	cf := m.curFiles()
+	if len(cf) != 1 || filepath.Base(cf[0]) != "beta.jsonl" {
+		t.Fatalf("filtered files = %v, want [beta.jsonl]", cf)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != ModeList {
+		t.Errorf("mode after enter = %v, want ModeList", m.mode)
+	}
+	// esc clears the filter back to all files
+	m.focus = FocusFiles
+	m = send(m, key('/'))
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if len(m.curFiles()) != 3 {
+		t.Errorf("after esc curFiles = %d, want 3", len(m.curFiles()))
+	}
+}
+
+func TestIsDateString(t *testing.T) {
+	yes := []string{"2026-06-21T13:51:32.672Z", "2026-06-21", "2026-06-21 13:51:32", "2026/06/21"}
+	no := []string{"", "hello", "deepseek-v4", "12345", "opencode-go"}
+	for _, s := range yes {
+		if !isDateString(s) {
+			t.Errorf("isDateString(%q) = false, want true", s)
+		}
+	}
+	for _, s := range no {
+		if isDateString(s) {
+			t.Errorf("isDateString(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestNullCellValue(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(`{"a":null,"b":1}`+"\n"), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	d := m.pageRows()[0]
+	txt, st := cellValue(d, "a")
+	if txt != "null" {
+		t.Errorf("null cell text = %q, want null", txt)
+	}
+	if st.Render("null") != styleNull.Render("null") {
+		t.Errorf("null cell style not styleNull")
+	}
+	// absent key → blank
+	if txt, _ := cellValue(d, "zzz"); txt != "" {
+		t.Errorf("absent key text = %q, want empty", txt)
 	}
 }

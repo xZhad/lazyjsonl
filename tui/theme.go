@@ -22,22 +22,23 @@ var (
 	cSelBg   = lipgloss.Color("#80205D") // selected-row background (magenta)
 	cMuted   = lipgloss.Color("#8A6FB8") // muted purple (secondary text)
 	cIdle    = lipgloss.Color("#54368E") // idle pane border
+	cOrange  = lipgloss.Color("#FF9E64") // dates / timestamps
 )
 
 var (
-	styleApp     = lipgloss.NewStyle().Foreground(cViolet).Bold(true)
-	stylePath    = lipgloss.NewStyle().Foreground(cMuted)
-	styleCount   = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	styleHeader  = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	styleSortCol = lipgloss.NewStyle().Foreground(cYellow).Bold(true)
-	styleMuted   = lipgloss.NewStyle().Foreground(cMuted)
-	styleText    = lipgloss.NewStyle().Foreground(cFg)
-	styleKey     = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	styleDanger  = lipgloss.NewStyle().Foreground(cRed).Bold(true)
-	styleOK      = lipgloss.NewStyle().Foreground(cGreen).Bold(true)
-	styleGutter  = lipgloss.NewStyle().Foreground(cMagenta).Bold(true)
-	styleSel     = lipgloss.NewStyle().Foreground(cBright).Background(cSelBg)
-	styleSelGut  = lipgloss.NewStyle().Foreground(cMagenta).Background(cSelBg).Bold(true)
+	styleApp      = lipgloss.NewStyle().Foreground(cViolet).Bold(true)
+	stylePath     = lipgloss.NewStyle().Foreground(cMuted)
+	styleCount    = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	styleHeader   = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	styleSortCol  = lipgloss.NewStyle().Foreground(cYellow).Bold(true)
+	styleMuted    = lipgloss.NewStyle().Foreground(cMuted)
+	styleText     = lipgloss.NewStyle().Foreground(cFg)
+	styleKey      = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	styleDanger   = lipgloss.NewStyle().Foreground(cRed).Bold(true)
+	styleOK       = lipgloss.NewStyle().Foreground(cGreen).Bold(true)
+	styleGutter   = lipgloss.NewStyle().Foreground(cMagenta).Bold(true)
+	styleSel      = lipgloss.NewStyle().Foreground(cBright).Background(cSelBg)
+	styleSelGut   = lipgloss.NewStyle().Foreground(cMagenta).Background(cSelBg).Bold(true)
 	styleTitleBar = lipgloss.NewStyle().Background(cBar)
 	styleFooter   = lipgloss.NewStyle().Background(cBar).Foreground(cMuted)
 	styleOverlay  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cViolet).
@@ -50,8 +51,9 @@ var (
 	styleNum      = lipgloss.NewStyle().Foreground(cCyan)
 	styleBoolTrue = lipgloss.NewStyle().Foreground(cGreen)
 	styleBoolFls  = lipgloss.NewStyle().Foreground(cRed)
-	styleNull     = lipgloss.NewStyle().Foreground(cIdle).Italic(true)
+	styleNull     = lipgloss.NewStyle().Foreground(cMuted).Italic(true)
 	styleObj      = lipgloss.NewStyle().Foreground(cYellow) // maps/arrays — hints "divable"
+	styleDate     = lipgloss.NewStyle().Foreground(cOrange) // date/time-looking strings
 )
 
 // pane returns a box style: a thick violet border when focused, a dim rounded

@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -22,6 +22,7 @@ const (
 	ModeFilter
 	ModeConfirm
 	ModeColumns
+	ModeFileSearch
 )
 
 // pickRow is one candidate column in the column picker (top-level or nested).
@@ -68,12 +69,15 @@ type Model struct {
 	pickCursor int
 	// drill-into-object: stack of prior column sets + breadcrumb of dived keys
 	drillStack [][]string
-	drillCrumb []string
+	drillPath  []string
 	// presentation
 	frame int // animation frame for the title shimmer
 	// bubbles components
 	filterInput textinput.Model
 	detailVP    viewport.Model
+	// files search
+	fileFilter string
+	fileInput  textinput.Model
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -126,6 +130,13 @@ func New(path string) (*Model, error) {
 	ti.SetVirtualCursor(true) // we run in alt-screen; draw our own cursor
 	ti.SetStyles(filterInputStyles())
 	m.filterInput = ti
+
+	fi := textinput.New()
+	fi.Prompt = ""
+	fi.SetVirtualCursor(true)
+	fi.SetStyles(filterInputStyles())
+	m.fileInput = fi
+
 	m.detailVP = viewport.New()
 
 	if err := m.openCurrent(); err != nil {
@@ -134,12 +145,35 @@ func New(path string) (*Model, error) {
 	return m, nil
 }
 
-// openCurrent opens files[fileIdx], rebuilding schema/result/columns.
+// curFiles is the file list after applying the (case-insensitive, substring)
+// files search filter. fileIdx always indexes into this list.
+func (m *Model) curFiles() []string {
+	if m.fileFilter == "" {
+		return m.files
+	}
+	q := strings.ToLower(m.fileFilter)
+	var out []string
+	for _, f := range m.files {
+		if strings.Contains(strings.ToLower(filepath.Base(f)), q) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// openCurrent opens curFiles()[fileIdx], rebuilding schema/result/columns.
 func (m *Model) openCurrent() error {
+	cf := m.curFiles()
+	if len(cf) == 0 {
+		return nil // nothing matches the files filter; keep current view
+	}
+	if m.fileIdx < 0 || m.fileIdx >= len(cf) {
+		m.fileIdx = 0
+	}
 	if m.col != nil {
 		m.col.Close()
 	}
-	c, err := jsonldb.Open(m.files[m.fileIdx])
+	c, err := jsonldb.Open(cf[m.fileIdx])
 	if err != nil {
 		return err
 	}
@@ -204,7 +238,11 @@ func copyToClipboard(b []byte) error {
 // exportCurrentView writes all docs in m.result atomically to a sibling file
 // named <basename-without-ext>.export.jsonl in the same directory as m.files[m.fileIdx].
 func (m *Model) exportCurrentView() error {
-	src := m.files[m.fileIdx]
+	cf := m.curFiles()
+	if len(cf) == 0 {
+		return fmt.Errorf("no file selected")
+	}
+	src := cf[m.fileIdx]
 	dir := filepath.Dir(src)
 	base := filepath.Base(src)
 	ext := filepath.Ext(base)
@@ -257,6 +295,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.frame++
 		return m, tick()
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// rows that fit the table pane: height − title − footer − border − pane-title − header
@@ -288,6 +328,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirm(msg)
 		case ModeColumns:
 			return m.updateColumns(msg)
+		case ModeFileSearch:
+			return m.updateFileSearch(msg)
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -297,10 +339,63 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.filterInput, cmd = m.filterInput.Update(msg)
 		return m, cmd
+	case ModeFileSearch:
+		var cmd tea.Cmd
+		m.fileInput, cmd = m.fileInput.Update(msg)
+		return m, cmd
 	case ModeDetail:
 		var cmd tea.Cmd
 		m.detailVP, cmd = m.detailVP.Update(msg)
 		return m, cmd
+	}
+	return m, nil
+}
+
+// handleWheel routes mouse-wheel scrolling: the detail viewport scrolls itself;
+// in the list, the wheel moves the files cursor when over the files pane,
+// otherwise the record cursor (rolling onto adjacent pages at the edges).
+func (m *Model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.mode == ModeDetail {
+		var cmd tea.Cmd
+		m.detailVP, cmd = m.detailVP.Update(e)
+		return m, cmd
+	}
+	if m.mode != ModeList {
+		return m, nil
+	}
+	up := e.Button == tea.MouseWheelUp
+	filesW := 0
+	if len(m.files) > 1 {
+		filesW = 32
+		if filesW > m.width/2 {
+			filesW = m.width / 2
+		}
+	}
+	if filesW > 0 && e.X < filesW { // over the files pane
+		if up && m.fileIdx > 0 {
+			m.fileIdx--
+			m.openCurrent()
+		} else if !up && m.fileIdx < len(m.curFiles())-1 {
+			m.fileIdx++
+			m.openCurrent()
+		}
+		return m, nil
+	}
+	rows := len(m.pageRows())
+	if up {
+		if m.cursor > 0 {
+			m.cursor--
+		} else if m.page > 1 {
+			m.page--
+			m.cursor = 0
+		}
+	} else {
+		if m.cursor < rows-1 {
+			m.cursor++
+		} else if m.page < m.pageCount() {
+			m.page++
+			m.cursor = 0
+		}
 	}
 	return m, nil
 }
@@ -338,7 +433,7 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "j", "down":
 		if m.focus == FocusFiles {
-			if m.fileIdx < len(m.files)-1 {
+			if m.fileIdx < len(m.curFiles())-1 {
 				m.fileIdx++
 				if err := m.openCurrent(); err != nil {
 					m.status = "open failed"
@@ -379,7 +474,7 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.focus = FocusTable
 		}
 	case "J":
-		if m.fileIdx < len(m.files)-1 {
+		if m.fileIdx < len(m.curFiles())-1 {
 			m.fileIdx++
 			if err := m.openCurrent(); err != nil {
 				m.status = "open failed"
@@ -393,6 +488,13 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "/":
+		if m.focus == FocusFiles {
+			m.fileInput.SetValue(m.fileFilter)
+			m.fileInput.CursorEnd()
+			cmd := m.fileInput.Focus()
+			m.mode = ModeFileSearch
+			return m, cmd
+		}
 		m.filterSaved = m.filter
 		m.filterInput.SetValue(m.filter)
 		m.filterInput.CursorEnd()
@@ -495,6 +597,47 @@ func (m *Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// updateFileSearch filters the files list live. up/down (or ctrl-n/p) move the
+// highlight within the filtered list; enter opens the highlighted file (keeping
+// the filter active); esc clears the filter and reopens the first file.
+func (m *Model) updateFileSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.fileInput.Blur()
+		m.mode = ModeList
+		if err := m.openCurrent(); err != nil {
+			m.status = "open failed"
+		}
+		return m, nil
+	case "esc":
+		m.fileFilter = ""
+		m.fileIdx = 0
+		m.fileInput.Blur()
+		m.mode = ModeList
+		if err := m.openCurrent(); err != nil {
+			m.status = "open failed"
+		}
+		return m, nil
+	case "up", "ctrl+p":
+		if m.fileIdx > 0 {
+			m.fileIdx--
+		}
+		return m, nil
+	case "down", "ctrl+n":
+		if m.fileIdx < len(m.curFiles())-1 {
+			m.fileIdx++
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.fileInput, cmd = m.fileInput.Update(msg)
+	m.fileFilter = m.fileInput.Value()
+	if m.fileIdx >= len(m.curFiles()) {
+		m.fileIdx = 0
+	}
+	return m, cmd
+}
+
 func (m *Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -585,8 +728,8 @@ func (m *Model) buildPickList() {
 	m.pickList = nil
 	// When dived into a nested object, the picker lists that object's
 	// subfields (e.g. message.role, message.content) instead of the schema.
-	if len(m.drillCrumb) > 0 {
-		prefix := strings.Join(m.drillCrumb, ".")
+	if len(m.drillPath) > 0 {
+		prefix := m.drillPrefix()
 		for _, k := range m.unionSubkeys(prefix) {
 			m.pickList = append(m.pickList, pickRow{key: prefix + "." + k, depth: 0})
 		}
@@ -703,7 +846,7 @@ func (m *Model) drillInto() {
 		newCols[i] = key + "." + k
 	}
 	m.drillStack = append(m.drillStack, m.columns)
-	m.drillCrumb = append(m.drillCrumb, key)
+	m.drillPath = append(m.drillPath, key)
 	m.columns = newCols
 	m.showAllColumns = true
 	m.colCursor = 0
@@ -716,9 +859,32 @@ func (m *Model) popDrill() {
 	}
 	m.columns = m.drillStack[len(m.drillStack)-1]
 	m.drillStack = m.drillStack[:len(m.drillStack)-1]
-	m.drillCrumb = m.drillCrumb[:len(m.drillCrumb)-1]
+	m.drillPath = m.drillPath[:len(m.drillPath)-1]
 	m.colCursor = 0
 }
 
-func (m *Model) Close() error { return m.col.Close() }
+// drillPrefix is the full dotted path of the current dive level ("" if none).
+func (m *Model) drillPrefix() string {
+	if len(m.drillPath) == 0 {
+		return ""
+	}
+	return m.drillPath[len(m.drillPath)-1]
+}
 
+// drillCrumbs returns the short segment name for each dive level for display,
+// e.g. drillPath ["message","message.usage"] → ["message","usage"].
+func (m *Model) drillCrumbs() []string {
+	out := make([]string, len(m.drillPath))
+	prev := ""
+	for i, p := range m.drillPath {
+		if prev != "" && strings.HasPrefix(p, prev+".") {
+			out[i] = strings.TrimPrefix(p, prev+".")
+		} else {
+			out[i] = p
+		}
+		prev = p
+	}
+	return out
+}
+
+func (m *Model) Close() error { return m.col.Close() }

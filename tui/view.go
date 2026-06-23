@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -30,6 +31,7 @@ func cell(s string, w int) string {
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion // enable wheel scrolling
 	return v
 }
 
@@ -57,11 +59,10 @@ func (m *Model) render() string {
 }
 
 func (m *Model) currentLabel() string {
-	cur := m.files[m.fileIdx]
 	if len(m.files) > 1 {
-		return filepath.Base(filepath.Dir(cur)) + "/"
+		return filepath.Base(filepath.Dir(m.files[0])) + "/"
 	}
-	return filepath.Base(cur)
+	return filepath.Base(m.files[0])
 }
 
 func (m *Model) renderTitle(w int) string {
@@ -94,18 +95,23 @@ func (m *Model) filesPane(w, h int, active bool) string {
 	if listH < 1 {
 		listH = 1
 	}
+	cf := m.curFiles()
 	start := 0
 	if m.fileIdx >= listH {
 		start = m.fileIdx - listH + 1
 	}
-	sb := scrollbar(listH, len(m.files), listH, start)
-	lines := []string{padTo(paneTitle(active, "FILES"), contentW) + " "}
+	title := paneTitle(active, "FILES")
+	if m.fileFilter != "" {
+		title += styleScrollHint.Render(fmt.Sprintf("  %d/%d", len(cf), len(m.files)))
+	}
+	sb := scrollbar(listH, len(cf), listH, start)
+	lines := []string{padTo(title, contentW) + " "}
 	for j := 0; j < listH; j++ {
 		i := start + j
 		var content string
 		switch {
-		case i < len(m.files):
-			name := filepath.Base(m.files[i])
+		case i < len(cf):
+			name := filepath.Base(cf[i])
 			if i == m.fileIdx {
 				row := styleSelGut.Render("▌ ") + styleSel.Render(cell(name, contentW-2))
 				content = styleSel.Width(contentW).Render(row)
@@ -153,7 +159,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 
 	// header (cell() truncates → no wrap; trailing space = column gap)
 	header := "  "
-	drillPrefix := strings.Join(m.drillCrumb, ".")
+	drillPrefix := m.drillPrefix()
 	for i, c := range cols {
 		label := c
 		// While dived, drop the drill prefix from headers: message.api → .api
@@ -174,8 +180,8 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		header += st.Render(cell(label, colW) + " ")
 	}
 	titleStr := "RECORDS"
-	if len(m.drillCrumb) > 0 {
-		titleStr += " · " + strings.Join(m.drillCrumb, " ▸ ")
+	if len(m.drillPath) > 0 {
+		titleStr += " · " + strings.Join(m.drillCrumbs(), " ▸ ")
 	}
 
 	rows := m.pageRows()
@@ -230,7 +236,10 @@ func cellValue(d jsonldb.Doc, col string) (string, lipgloss.Style) {
 		raw, ok = d.Get(col)
 	}
 	if !ok {
-		return "", styleText
+		return "", styleText // key absent → blank cell
+	}
+	if raw == nil {
+		return "null", styleNull // explicit JSON null → visible, dim italic
 	}
 	return scalarStr(raw), valueStyle(raw)
 }
@@ -248,9 +257,44 @@ func valueStyle(v any) lipgloss.Style {
 		return styleNum
 	case map[string]any, []any:
 		return styleObj
+	case string:
+		if isDateString(x) {
+			return styleDate
+		}
+		return styleText
 	default:
 		return styleText
 	}
+}
+
+// dateLayouts are the formats we treat as "date-like" for coloring.
+var dateLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+	"2006/01/02",
+	time.RFC1123Z,
+	time.RFC1123,
+}
+
+// isDateString reports whether s parses as a timestamp in a common layout.
+// Length-gated so it stays cheap on the table's hot path.
+func isDateString(s string) bool {
+	if len(s) < 8 || len(s) > 40 {
+		return false
+	}
+	c := s[0]
+	if (c < '0' || c > '9') && (c < 'A' || c > 'Z') { // year digit or weekday name
+		return false
+	}
+	for _, l := range dateLayouts {
+		if _, err := time.Parse(l, s); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func scalarStr(v any) string {
@@ -272,6 +316,10 @@ func (m *Model) renderFooter(w int) string {
 			s += "  " + styleDanger.Render(m.filterErr.Error())
 		}
 		return styleFooter.Width(w).Render(s)
+	case ModeFileSearch:
+		s := styleKey.Render(" search ") + m.fileInput.View() +
+			styleMuted.Render("   ↑↓ pick · ↵ open · esc clear")
+		return styleFooter.Width(w).Render(s)
 	case ModeConfirm:
 		if d, ok := m.selectedDoc(); ok {
 			s := " " + styleDanger.Render(fmt.Sprintf("delete record on line %d?", d.Line())) +
@@ -281,7 +329,7 @@ func (m *Model) renderFooter(w int) string {
 	}
 	left := " " + keyHint("j/k", "move") + keyHint("/", "filter") + keyHint("↵", "view") +
 		keyHint("s", "sort") + keyHint("space", "dive") + keyHint("c", "cols") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
-	if len(m.drillCrumb) > 0 {
+	if len(m.drillPath) > 0 {
 		left = " " + keyHint("⌫", "back") + keyHint("space", "dive") + keyHint("s", "sort") + keyHint("/", "filter") + keyHint("c", "cols") + keyHint("?", "help") + keyHint("q", "quit")
 	}
 	right := ""
@@ -290,7 +338,7 @@ func (m *Model) renderFooter(w int) string {
 		if strings.Contains(m.status, "fail") || strings.Contains(m.status, "unavailable") {
 			st = styleDanger
 		}
-		right += st.Render("● "+m.status+"  ")
+		right += st.Render("● " + m.status + "  ")
 	}
 	right += lipgloss.NewStyle().Foreground(cViolet).Bold(true).Render(fmt.Sprintf("page %d/%d ", m.page, m.pageCount()))
 	return bar(w, left, right)
@@ -352,9 +400,10 @@ func (m *Model) renderHelp(w, h int) string {
 		{"space", "dive into focused object column"},
 		{"backspace", "back out of a dive"},
 		{"enter", "open record detail (j/k scrolls it)"},
-		{"/", "filter (DSL, incl. nested: message.role=user)"},
-		{"esc", "clear filter"},
+		{"/", "filter records — or search files (on files pane)"},
+		{"esc", "clear filter / search"},
 		{"c", "choose columns (incl. nested fields)"},
+		{"mouse wheel", "scroll list / files / record"},
 		{"d", "delete record (confirm)"},
 		{"e", "export view → .export.jsonl"},
 		{"y", "yank record JSON to clipboard"},
@@ -401,7 +450,7 @@ func (m *Model) renderColumns(w, h int) string {
 			mark = styleGutter.Render("▌ ")
 		}
 		label := r.key
-		if dp := strings.Join(m.drillCrumb, "."); dp != "" && strings.HasPrefix(label, dp+".") {
+		if dp := m.drillPrefix(); dp != "" && strings.HasPrefix(label, dp+".") {
 			label = strings.TrimPrefix(label, dp)
 		}
 		var name string

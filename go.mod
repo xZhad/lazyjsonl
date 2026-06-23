@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.4
-	github.com/xZhad/jsonldb v0.2.0
+	github.com/xZhad/jsonldb v0.2.1
 	golang.org/x/term v0.44.0
 )
 
