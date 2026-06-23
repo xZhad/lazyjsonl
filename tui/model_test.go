@@ -975,8 +975,8 @@ func TestStackedGroupFilters(t *testing.T) {
 	if m.result.Count() != 2 {
 		t.Errorf("stacked count = %d, want 2 (books AND north)", m.result.Count())
 	}
-	if m.filter != `(cat="books") region="north"` {
-		t.Errorf("combined filter = %q, want (cat=\"books\") region=\"north\"", m.filter)
+	if m.filter != `cat="books" region="north"` {
+		t.Errorf("combined filter = %q, want cat=\"books\" region=\"north\"", m.filter)
 	}
 	// esc clears all
 	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})

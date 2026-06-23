@@ -1344,7 +1344,11 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			clause := m.groupField + "=" + groupFilterLiteral(gr.key)
 			combined := clause
 			if m.filter != "" {
-				combined = "(" + m.filter + ") " + clause
+				prev := m.filter
+				if strings.Contains(prev, "|=") { // OR binds looser than implicit AND
+					prev = "(" + prev + ")"
+				}
+				combined = prev + " " + clause
 			}
 			m.filter = combined
 			if res, err := m.col.Query(combined); err == nil && res.Count() == gr.count {
