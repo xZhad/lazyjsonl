@@ -1011,3 +1011,23 @@ func TestFilterFromCell(t *testing.T) {
 		t.Errorf("F: filter=%q count=%d, want cat!=\"a\"/1", m.filter, m.result.Count())
 	}
 }
+
+func TestSmartFormatters(t *testing.T) {
+	cases := []struct {
+		col  string
+		f    float64
+		want string
+	}{
+		{"latency_ms", 1500, "1.5s"},
+		{"latency_ms", 250, "250ms"},
+		{"duration_min", 90, "1h30m"},
+		{"size_bytes", 2048, "2.0 KB"},
+		{"amount", 28635, "28,635"},
+		{"amount", 1466.666, "1,466.67"},
+	}
+	for _, c := range cases {
+		if got := formatNumberCol(c.col, c.f); got != c.want {
+			t.Errorf("formatNumberCol(%q,%g) = %q, want %q", c.col, c.f, got, c.want)
+		}
+	}
+}

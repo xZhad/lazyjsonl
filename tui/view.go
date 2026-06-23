@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"math"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -197,8 +198,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		colCells := make([]string, len(pageDocs))
 		wmax := len([]rune(label))
 		for r, d := range pageDocs {
-			txt, _ := cellValue(d, c)
-			txt = clip(txt, 32)
+			txt := clip(m.displayText(d, c), 32)
 			colCells[r] = txt
 			if l := len([]rune(txt)); l > wmax {
 				wmax = l
@@ -898,6 +898,157 @@ func (m *Model) buildHeatmap(w, h int) string {
 		sb.WriteString("\n")
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// displayText is the cell text as shown in the table: the cellValue glyph/
+// string, then smart-formatted (durations, bytes, thousands, relative time)
+// when m.pretty is on.
+func (m *Model) displayText(d jsonldb.Doc, col string) string {
+	txt, _ := cellValue(d, col)
+	if !m.pretty {
+		return txt
+	}
+	raw, ok := docRaw(d, col)
+	if !ok {
+		return txt
+	}
+	return prettyText(col, raw, txt)
+}
+
+func toFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	case float64:
+		return x, true
+	}
+	return 0, false
+}
+
+// prettyText smart-formats a value, falling back to `fallback` when no special
+// formatting applies.
+func prettyText(col string, raw any, fallback string) string {
+	switch x := raw.(type) {
+	case json.Number, float64:
+		f, _ := toFloat(raw)
+		return formatNumberCol(col, f)
+	case string:
+		if isDateString(x) {
+			return relTime(x)
+		}
+	}
+	return fallback
+}
+
+func formatNumberCol(col string, f float64) string {
+	lc := strings.ToLower(col)
+	switch {
+	case strings.HasSuffix(lc, "_ms") || strings.Contains(lc, "latency") || strings.Contains(lc, "millis"):
+		return humanDur(f)
+	case strings.HasSuffix(lc, "_sec") || strings.HasSuffix(lc, "_secs") || strings.HasSuffix(lc, "_seconds"):
+		return humanDur(f * 1000)
+	case strings.HasSuffix(lc, "_min") || strings.HasSuffix(lc, "_minutes"):
+		return humanDur(f * 60000)
+	case strings.Contains(lc, "bytes") || strings.HasSuffix(lc, "_size") || lc == "size":
+		return humanBytes(f)
+	default:
+		return thousands(f)
+	}
+}
+
+func humanDur(ms float64) string {
+	switch {
+	case ms < 1000:
+		return fmt.Sprintf("%gms", math.Round(ms))
+	case ms < 60000:
+		return fmt.Sprintf("%.1fs", ms/1000)
+	case ms < 3600000:
+		return fmt.Sprintf("%dm%ds", int(ms)/60000, (int(ms)%60000)/1000)
+	default:
+		return fmt.Sprintf("%dh%dm", int(ms)/3600000, (int(ms)%3600000)/60000)
+	}
+}
+
+func humanBytes(n float64) string {
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	for n >= 1024 && i < len(units)-1 {
+		n /= 1024
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%g B", n)
+	}
+	return fmt.Sprintf("%.1f %s", n, units[i])
+}
+
+// thousands groups the integer part with commas (keeps up to 2 decimals).
+func thousands(f float64) string {
+	neg := f < 0
+	if neg {
+		f = -f
+	}
+	whole := int64(f)
+	frac := ""
+	if f != math.Trunc(f) {
+		frac = strings.TrimRight(fmt.Sprintf("%.2f", f-float64(whole)), "0")
+		frac = strings.TrimPrefix(frac, "0") // ".25"
+	}
+	s := fmt.Sprintf("%d", whole)
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	res := string(out) + frac
+	if neg {
+		res = "-" + res
+	}
+	return res
+}
+
+// relTime renders a timestamp string as a relative age ("3h", "2d", "5mo").
+func relTime(s string) string {
+	var t time.Time
+	for _, l := range dateLayouts {
+		if pt, err := time.Parse(l, s); err == nil {
+			t = pt
+			break
+		}
+	}
+	if t.IsZero() {
+		return s
+	}
+	d := time.Since(t)
+	future := d < 0
+	if future {
+		d = -d
+	}
+	var r string
+	switch {
+	case d < time.Minute:
+		r = "just now"
+	case d < time.Hour:
+		r = fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		r = fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		r = fmt.Sprintf("%dd", int(d.Hours()/24))
+	case d < 365*24*time.Hour:
+		r = fmt.Sprintf("%dmo", int(d.Hours()/24/30))
+	default:
+		r = fmt.Sprintf("%dy", int(d.Hours()/24/365))
+	}
+	if r == "just now" {
+		return r
+	}
+	if future {
+		return "in " + r
+	}
+	return r + " ago"
 }
 
 // docRaw returns a column's raw value (plain or dotted path).

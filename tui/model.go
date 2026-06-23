@@ -82,6 +82,7 @@ type Model struct {
 	height         int
 	showAllColumns bool
 	showHelp       bool
+	pretty         bool // smart value formatting (durations, bytes, commas, rel time)
 	defaultCap     int
 	status         string
 	// column picker
@@ -175,6 +176,7 @@ func New(path string) (*Model, error) {
 		pageSize:   20,
 		mode:       ModeList,
 		defaultCap: 8,
+		pretty:     true,
 	}
 	if len(files) > 1 {
 		m.focus = FocusFiles
@@ -679,6 +681,13 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.colCursor < len(cols) {
 			m.openGroup(cols[m.colCursor])
 		}
+	case "#": // toggle smart value formatting
+		m.pretty = !m.pretty
+		if m.pretty {
+			m.status = "formatting on"
+		} else {
+			m.status = "formatting off"
+		}
 	case "f": // filter to the focused cell's value
 		m.filterFromCell(false)
 	case "F": // exclude the focused cell's value
@@ -1139,8 +1148,7 @@ func (m *Model) tableContentW() int {
 func (m *Model) colDisplayWidth(c string) int {
 	wmax := len([]rune(m.headerLabel(c)))
 	for _, d := range m.pageRows() {
-		txt, _ := cellValue(d, c)
-		if l := len([]rune(clip(txt, 32))); l > wmax {
+		if l := len([]rune(clip(m.displayText(d, c), 32))); l > wmax {
 			wmax = l
 		}
 	}

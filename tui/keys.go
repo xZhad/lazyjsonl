@@ -30,6 +30,7 @@ type keyMap struct {
 	Yank     key.Binding
 	YankCell key.Binding
 	Reload   key.Binding
+	Format   key.Binding
 	Mouse    key.Binding
 	Help     key.Binding
 	Quit     key.Binding
@@ -60,6 +61,7 @@ var keys = keyMap{
 	Yank:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank record")),
 	YankCell: key.NewBinding(key.WithKeys("Y"), key.WithHelp("Y", "yank cell")),
 	Reload:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload")),
+	Format:   key.NewBinding(key.WithKeys("#"), key.WithHelp("#", "raw/pretty values")),
 	Mouse:    key.NewBinding(key.WithKeys("wheel"), key.WithHelp("wheel", "scroll")),
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
@@ -81,6 +83,6 @@ func fullGroups() [][]key.Binding {
 	return [][]key.Binding{
 		{keys.Move, keys.Column, keys.Page, keys.Ends, keys.File, keys.Tab, keys.Jump},
 		{keys.Enter, keys.Sort, keys.Stats, keys.Group, keys.Chart, keys.Dive, keys.Back, keys.Cols, keys.Filter, keys.CellFilt, keys.Esc},
-		{keys.Yank, keys.YankCell, keys.Delete, keys.Export, keys.Reload, keys.Mouse, keys.Help, keys.Quit},
+		{keys.Yank, keys.YankCell, keys.Delete, keys.Export, keys.Reload, keys.Format, keys.Mouse, keys.Help, keys.Quit},
 	}
 }
