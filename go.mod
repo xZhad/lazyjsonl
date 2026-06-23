@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	charm.land/bubbletea/v2 v2.0.7
-	github.com/xZhad/jsonldb v0.0.0-20260622183548-723aad25f23f
+	github.com/xZhad/jsonldb v0.1.0
 	golang.org/x/term v0.44.0
 )
 

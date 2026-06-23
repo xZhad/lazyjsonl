@@ -10,11 +10,17 @@ lazyjsonl adds **zero query/storage logic** — filtering, schema discovery, sor
 
 ## Install
 
+Homebrew:
+
+```sh
+brew install xZhad/tap/lazyjsonl
+```
+
+Or with Go (requires Go 1.26+):
+
 ```sh
 go install github.com/xZhad/lazyjsonl@latest
 ```
-
-Requires Go 1.26+.
 
 ---
 

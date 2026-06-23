@@ -1,0 +1,66 @@
+version: 2
+
+project_name: lazyjsonl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lazyjsonl
+    main: .
+    binary: lazyjsonl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: xZhad
+    name: lazyjsonl
+
+homebrew_casks:
+  - name: lazyjsonl
+    binaries:
+      - lazyjsonl
+    repository:
+      owner: xZhad
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/xZhad/lazyjsonl"
+    description: "Terminal UI for inspecting, filtering, and managing JSONL files — like lazygit for structured data"
+    # strip the Gatekeeper quarantine bit (binaries are unsigned)
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lazyjsonl"]
+          end
