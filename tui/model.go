@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -24,6 +25,7 @@ const (
 	ModeConfirm
 	ModeColumns
 	ModeFileSearch
+	ModeJump
 )
 
 // pickRow is one candidate column in the column picker (top-level or nested).
@@ -50,7 +52,8 @@ type Model struct {
 	page           int      // 1-based
 	pageSize       int
 	cursor         int // selected row within page
-	colCursor      int // selected column index (for sort)
+	colCursor      int // selected column index (absolute, into activeColumns)
+	colOffset      int // leftmost visible column (horizontal scroll)
 	sortField      string
 	sortDesc       bool
 	filter         string
@@ -81,6 +84,8 @@ type Model struct {
 	fileInput  textinput.Model
 	// help
 	help help.Model
+	// jump-to-record
+	jumpInput textinput.Model
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -144,6 +149,12 @@ func New(path string) (*Model, error) {
 	h.Styles = helpStyles()
 	m.help = h
 
+	ji := textinput.New()
+	ji.Prompt = ""
+	ji.SetVirtualCursor(true)
+	ji.SetStyles(filterInputStyles())
+	m.jumpInput = ji
+
 	m.detailVP = viewport.New()
 
 	if err := m.openCurrent(); err != nil {
@@ -199,7 +210,7 @@ func (m *Model) openCurrent() error {
 	m.columns = defaultColumns(m.schema, cap)
 	m.filter = ""
 	m.filterErr = nil
-	m.page, m.cursor, m.colCursor = 1, 0, 0
+	m.page, m.cursor, m.colCursor, m.colOffset = 1, 0, 0, 0
 	return nil
 }
 
@@ -337,6 +348,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateColumns(msg)
 		case ModeFileSearch:
 			return m.updateFileSearch(msg)
+		case ModeJump:
+			return m.updateJump(msg)
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -349,6 +362,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ModeFileSearch:
 		var cmd tea.Cmd
 		m.fileInput, cmd = m.fileInput.Update(msg)
+		return m, cmd
+	case ModeJump:
+		var cmd tea.Cmd
+		m.jumpInput, cmd = m.jumpInput.Update(msg)
 		return m, cmd
 	case ModeDetail:
 		var cmd tea.Cmd
@@ -428,9 +445,9 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
-	// Clear status on every key except keys that set it (y, e).
+	// Clear status on every key except keys that set it (y, Y, e).
 	k := msg.String()
-	if k != "y" && k != "e" {
+	if k != "y" && k != "Y" && k != "e" {
 		m.status = ""
 	}
 
@@ -460,12 +477,22 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else if m.cursor > 0 {
 			m.cursor--
 		}
-	case "l", "right":
+	case "l", "right", "L", "alt+right":
+		if m.focus == FocusTable && m.colCursor < len(m.activeColumns())-1 {
+			m.colCursor++
+			m.ensureColVisible()
+		}
+	case "h", "left", "H", "alt+left":
+		if m.focus == FocusTable && m.colCursor > 0 {
+			m.colCursor--
+			m.ensureColVisible()
+		}
+	case "]", "pgdown":
 		if m.page < m.pageCount() {
 			m.page++
 			m.cursor = 0
 		}
-	case "h", "left":
+	case "[", "pgup":
 		if m.page > 1 {
 			m.page--
 			m.cursor = 0
@@ -529,9 +556,26 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if err := copyToClipboard(d.Raw()); err != nil {
 				m.status = "clipboard unavailable"
 			} else {
-				m.status = "yanked"
+				m.status = "yanked record"
 			}
 		}
+	case "Y":
+		if d, ok := m.selectedDoc(); ok {
+			cols := m.activeColumns()
+			if m.colCursor < len(cols) {
+				txt, _ := cellValue(d, cols[m.colCursor])
+				if err := copyToClipboard([]byte(txt)); err != nil {
+					m.status = "clipboard unavailable"
+				} else {
+					m.status = "yanked cell"
+				}
+			}
+		}
+	case ":":
+		m.jumpInput.SetValue("")
+		cmd := m.jumpInput.Focus()
+		m.mode = ModeJump
+		return m, cmd
 	case "e":
 		src := m.files[m.fileIdx]
 		base := filepath.Base(src)
@@ -542,14 +586,6 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "export failed"
 		} else {
 			m.status = "exported to " + exportBase
-		}
-	case "L", "alt+right":
-		if m.colCursor < len(m.activeColumns())-1 {
-			m.colCursor++
-		}
-	case "H", "alt+left":
-		if m.colCursor > 0 {
-			m.colCursor--
 		}
 	case "s":
 		cols := m.activeColumns()
@@ -644,6 +680,31 @@ func (m *Model) updateFileSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.fileIdx >= len(m.curFiles()) {
 		m.fileIdx = 0
 	}
+	return m, cmd
+}
+
+// updateJump reads a record number and jumps the cursor to it (1-based,
+// clamped to the result count). Digits only; enter commits, esc cancels.
+func (m *Model) updateJump(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		if n, err := strconv.Atoi(strings.TrimSpace(m.jumpInput.Value())); err == nil && n >= 1 {
+			if total := m.result.Count(); n > total {
+				n = total
+			}
+			m.page = (n-1)/m.pageSize + 1
+			m.cursor = (n - 1) % m.pageSize
+		}
+		m.jumpInput.Blur()
+		m.mode = ModeList
+		return m, nil
+	case "esc":
+		m.jumpInput.Blur()
+		m.mode = ModeList
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.jumpInput, cmd = m.jumpInput.Update(msg)
 	return m, cmd
 }
 
@@ -804,6 +865,7 @@ func (m *Model) applyColumnPick() {
 	m.showAllColumns = true // selection is explicit now
 	if m.colCursor >= len(cols) {
 		m.colCursor = 0
+		m.colOffset = 0
 	}
 }
 
@@ -859,6 +921,7 @@ func (m *Model) drillInto() {
 	m.columns = newCols
 	m.showAllColumns = true
 	m.colCursor = 0
+	m.colOffset = 0
 }
 
 // popDrill backs out one drill level, restoring the previous columns.
@@ -870,6 +933,86 @@ func (m *Model) popDrill() {
 	m.drillStack = m.drillStack[:len(m.drillStack)-1]
 	m.drillPath = m.drillPath[:len(m.drillPath)-1]
 	m.colCursor = 0
+	m.colOffset = 0
+}
+
+// headerLabel is the displayed header for a column: drill-prefix trimmed plus
+// the sort arrow. Shared by the table renderer and the column-fit math.
+func (m *Model) headerLabel(c string) string {
+	label := c
+	if dp := m.drillPrefix(); dp != "" && strings.HasPrefix(c, dp+".") {
+		label = strings.TrimPrefix(c, dp)
+	}
+	if c == m.sortField {
+		if m.sortDesc {
+			label += " ▼"
+		} else {
+			label += " ▲"
+		}
+	}
+	return label
+}
+
+// tableContentW is the usable width inside the records pane (minus the files
+// pane when shown, the border, and the scrollbar column).
+func (m *Model) tableContentW() int {
+	w := m.width
+	if len(m.files) > 1 {
+		filesW := 32
+		if filesW > w/2 {
+			filesW = w / 2
+		}
+		w -= filesW
+	}
+	cw := w - 2 - 1
+	if cw < 4 {
+		cw = 4
+	}
+	return cw
+}
+
+// colDisplayWidth is a column's natural width: max rune width of its header and
+// its clipped cell values on the current page.
+func (m *Model) colDisplayWidth(c string) int {
+	wmax := len([]rune(m.headerLabel(c)))
+	for _, d := range m.pageRows() {
+		txt, _ := cellValue(d, c)
+		if l := len([]rune(clip(txt, 32))); l > wmax {
+			wmax = l
+		}
+	}
+	return wmax
+}
+
+// colsFitFrom reports how many columns fit in the pane starting at index start
+// (each costs its width + 2 padding + 1 separator). Always ≥1 if any remain.
+func (m *Model) colsFitFrom(start int) int {
+	cols := m.activeColumns()
+	cw := m.tableContentW()
+	used, n := 0, 0
+	for i := start; i < len(cols); i++ {
+		need := m.colDisplayWidth(cols[i]) + 3
+		if n > 0 && used+need > cw {
+			break
+		}
+		used += need
+		n++
+	}
+	if n == 0 && start < len(cols) {
+		n = 1
+	}
+	return n
+}
+
+// ensureColVisible scrolls the column window so colCursor stays on screen.
+func (m *Model) ensureColVisible() {
+	if m.colCursor < m.colOffset {
+		m.colOffset = m.colCursor
+		return
+	}
+	if m.colCursor >= m.colOffset+m.colsFitFrom(m.colOffset) {
+		m.colOffset = m.colCursor // bring cursor to the left edge
+	}
 }
 
 // drillPrefix is the full dotted path of the current dive level ("" if none).

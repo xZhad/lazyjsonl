@@ -155,33 +155,17 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		contentW = 4
 	}
 
-	drillPrefix := m.drillPrefix()
 	pageDocs := m.pageRows()
+	allCols := m.activeColumns()
 
-	// Build each candidate column's header + clipped cells, measuring its
-	// natural width, then greedily keep the columns that fit contentW (each
-	// costs its width + 2 padding + 1 separator). This shows as many columns
-	// as fit without lipgloss starving short-value columns to a "…" header.
-	headerLabel := func(c string) string {
-		label := c
-		if drillPrefix != "" && strings.HasPrefix(c, drillPrefix+".") {
-			label = strings.TrimPrefix(c, drillPrefix) // message.usage.input → .input
-		}
-		if c == m.sortField {
-			if m.sortDesc {
-				label += " ▼"
-			} else {
-				label += " ▲"
-			}
-		}
-		return label
-	}
-
+	// Window of columns starting at colOffset (horizontal scroll). Greedily keep
+	// the columns that fit contentW (each costs width + 2 padding + 1 separator),
+	// so short-value columns aren't starved to a "…" header by lipgloss.
 	var headers []string
 	var data [][]string // column-major while building, transposed below
 	used := 0
-	for _, c := range m.activeColumns() {
-		label := headerLabel(c)
+	for _, c := range allCols[min(m.colOffset, len(allCols)):] {
+		label := m.headerLabel(c)
 		colCells := make([]string, len(pageDocs))
 		wmax := len([]rune(label))
 		for r, d := range pageDocs {
@@ -199,7 +183,8 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		headers = append(headers, label)
 		data = append(data, colCells)
 	}
-	cols := m.activeColumns()[:len(headers)]
+	cols := allCols[m.colOffset : m.colOffset+len(headers)] // visible window
+	curVis := m.colCursor - m.colOffset                     // cursor index within window
 
 	rowsOut := make([][]string, len(pageDocs))
 	for r := range pageDocs {
@@ -221,7 +206,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		StyleFunc(func(row, col int) lipgloss.Style {
 			switch {
 			case row == table.HeaderRow:
-				if col < len(cols) && (cols[col] == m.sortField || (active && col == m.colCursor)) {
+				if col < len(cols) && (cols[col] == m.sortField || (active && col == curVis)) {
 					return styleSortCol.Padding(0, 1)
 				}
 				return styleHeader.Padding(0, 1)
@@ -250,7 +235,12 @@ func (m *Model) tablePane(w, h int, active bool) string {
 	if len(m.drillPath) > 0 {
 		titleStr += " · " + strings.Join(m.drillCrumbs(), " ▸ ")
 	}
-	content := padTo(paneTitle(active, titleStr), inner) + "\n" + strings.Join(body, "\n")
+	title := paneTitle(active, titleStr)
+	if len(allCols) > len(headers) { // columns overflow → show window position
+		title += styleScrollHint.Render(fmt.Sprintf("   ‹ %d–%d / %d ›",
+			m.colOffset+1, m.colOffset+len(headers), len(allCols)))
+	}
+	content := padTo(title, inner) + "\n" + strings.Join(body, "\n")
 	return pane(active).Width(w).Height(h).MaxHeight(h).Render(content)
 }
 
@@ -348,6 +338,10 @@ func (m *Model) renderFooter(w int) string {
 	case ModeFileSearch:
 		s := styleKey.Render(" search ") + m.fileInput.View() +
 			styleMuted.Render("   ↑↓ pick · ↵ open · esc clear")
+		return styleFooter.Width(w).Render(s)
+	case ModeJump:
+		s := styleKey.Render(" jump to # ") + m.jumpInput.View() +
+			styleMuted.Render(fmt.Sprintf("   1–%d · ↵ go · esc cancel", m.result.Count()))
 		return styleFooter.Width(w).Render(s)
 	case ModeConfirm:
 		if d, ok := m.selectedDoc(); ok {

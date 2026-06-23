@@ -35,10 +35,10 @@ func TestListNavigation(t *testing.T) {
 		t.Errorf("cursor clamped = %d, want 1", m.cursor)
 	}
 	// next page
-	mi, _ = m.Update(kp('l'))
+	mi, _ = m.Update(kp(']'))
 	m = mi.(*Model)
 	if m.page != 2 {
-		t.Errorf("page after l = %d, want 2", m.page)
+		t.Errorf("page after ] = %d, want 2", m.page)
 	}
 	if m.cursor != 0 {
 		t.Errorf("cursor should reset to 0 on page change, got %d", m.cursor)
@@ -47,7 +47,7 @@ func TestListNavigation(t *testing.T) {
 		t.Errorf("page 2 rows = %d, want 1", len(m.pageRows()))
 	}
 	// next page clamps (only 2 pages)
-	mi, _ = m.Update(kp('l'))
+	mi, _ = m.Update(kp(']'))
 	m = mi.(*Model)
 	if m.page != 2 {
 		t.Errorf("page clamped = %d, want 2", m.page)
@@ -609,5 +609,54 @@ func TestEscBacksOutOfDive(t *testing.T) {
 	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // esc backs out
 	if len(m.drillPath) != 0 {
 		t.Errorf("drillPath after esc = %d, want 0", len(m.drillPath))
+	}
+}
+
+func TestColumnHScroll(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8}`+"\n"), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 24, Height: 12})
+	m.showAllColumns = true
+	cols := m.activeColumns()
+	for i := 0; i < len(cols); i++ { // walk cursor to the last column
+		m = send(m, kp('l'))
+	}
+	if m.colCursor != len(cols)-1 {
+		t.Fatalf("colCursor = %d, want %d", m.colCursor, len(cols)-1)
+	}
+	if m.colOffset == 0 {
+		t.Errorf("expected colOffset to advance with scroll, got 0")
+	}
+	fit := m.colsFitFrom(m.colOffset)
+	if m.colCursor < m.colOffset || m.colCursor >= m.colOffset+fit {
+		t.Errorf("cursor %d outside window [%d,%d)", m.colCursor, m.colOffset, m.colOffset+fit)
+	}
+	for i := 0; i < len(cols); i++ { // walk back to the start
+		m = send(m, kp('h'))
+	}
+	if m.colCursor != 0 || m.colOffset != 0 {
+		t.Errorf("back to start: cursor=%d offset=%d, want 0/0", m.colCursor, m.colOffset)
+	}
+}
+
+func TestJumpToRecord(t *testing.T) {
+	m, _ := New(fixture(t)) // 3 records
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m.pageSize = 1 // 3 pages of 1
+	m = send(m, kp(':'))
+	if m.mode != ModeJump {
+		t.Fatalf("mode = %v, want ModeJump", m.mode)
+	}
+	m = send(m, kp('3'))
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != ModeList {
+		t.Errorf("mode after enter = %v, want ModeList", m.mode)
+	}
+	if m.page != 3 || m.cursor != 0 {
+		t.Errorf("jump to 3 (pageSize 1): page=%d cursor=%d, want 3/0", m.page, m.cursor)
 	}
 }
