@@ -227,6 +227,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// rows that fit the table pane: height − title − footer − border − pane-title − header
+		ps := msg.Height - 6
+		if ps < 1 {
+			ps = 1
+		}
+		m.pageSize = ps
+		if m.page > m.pageCount() {
+			m.page = m.pageCount()
+		}
+		if rows := len(m.pageRows()); m.cursor >= rows {
+			m.cursor = rows - 1
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+		}
 		return m, nil
 	case tea.KeyPressMsg:
 		switch m.mode {
@@ -261,11 +276,25 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
-		if m.cursor < rows-1 {
+		if m.focus == FocusFiles {
+			if m.fileIdx < len(m.files)-1 {
+				m.fileIdx++
+				if err := m.openCurrent(); err != nil {
+					m.status = "open failed"
+				}
+			}
+		} else if m.cursor < rows-1 {
 			m.cursor++
 		}
 	case "k", "up":
-		if m.cursor > 0 {
+		if m.focus == FocusFiles {
+			if m.fileIdx > 0 {
+				m.fileIdx--
+				if err := m.openCurrent(); err != nil {
+					m.status = "open failed"
+				}
+			}
+		} else if m.cursor > 0 {
 			m.cursor--
 		}
 	case "l", "right":
