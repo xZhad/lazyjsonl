@@ -28,6 +28,8 @@ const (
 	ModeFileSearch
 	ModeJump
 	ModeDetailSearch
+	ModeStats
+	ModeGroup
 )
 
 // pickRow is one candidate column in the column picker (top-level or nested).
@@ -91,6 +93,25 @@ type Model struct {
 	// detail search
 	detailInput textinput.Model
 	detailQuery string
+	// aggregate
+	stats       statsData
+	groupField  string
+	groupRows   []groupRow
+	groupCursor int
+}
+
+// statsData is a numeric column summary.
+type statsData struct {
+	field                       string
+	count                       int
+	min, max, sum, mean, median float64
+}
+
+// groupRow is one distinct value of a grouped column with its record subset.
+type groupRow struct {
+	key   string
+	count int
+	res   *jsonldb.Result
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -365,6 +386,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateJump(msg)
 		case ModeDetailSearch:
 			return m.updateDetailSearch(msg)
+		case ModeStats:
+			m.mode = ModeList // any key closes the stats popup
+			return m, nil
+		case ModeGroup:
+			return m.updateGroup(msg)
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -618,6 +644,16 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.result = m.result.SortBy(field, m.sortDesc)
 			m.page, m.cursor = 1, 0
+		}
+	case "S":
+		cols := m.activeColumns()
+		if m.colCursor < len(cols) {
+			m.openStats(cols[m.colCursor])
+		}
+	case "a":
+		cols := m.activeColumns()
+		if m.colCursor < len(cols) {
+			m.openGroup(cols[m.colCursor])
 		}
 	case "d":
 		if _, ok := m.selectedDoc(); ok {
@@ -1131,6 +1167,91 @@ func (m *Model) drillCrumbs() []string {
 		prev = p
 	}
 	return out
+}
+
+// openStats computes a numeric summary of field over the current result and
+// opens the stats popup, or sets a status if the column has no numeric values.
+func (m *Model) openStats(field string) {
+	var vals []float64
+	for _, d := range m.result.Docs() {
+		if f, ok := docFloat(d, field); ok {
+			vals = append(vals, f)
+		}
+	}
+	if len(vals) == 0 {
+		m.status = "‘" + field + "’ has no numeric values"
+		return
+	}
+	sort.Float64s(vals)
+	sum := 0.0
+	for _, v := range vals {
+		sum += v
+	}
+	n := len(vals)
+	median := vals[n/2]
+	if n%2 == 0 {
+		median = (vals[n/2-1] + vals[n/2]) / 2
+	}
+	m.stats = statsData{
+		field:  field,
+		count:  n,
+		min:    vals[0],
+		max:    vals[n-1],
+		sum:    sum,
+		mean:   sum / float64(n),
+		median: median,
+	}
+	m.mode = ModeStats
+}
+
+// openGroup groups the current result by field (distinct value → subset),
+// sorted by count desc, and opens the group view.
+func (m *Model) openGroup(field string) {
+	groups := m.result.GroupBy(field)
+	rows := make([]groupRow, 0, len(groups))
+	for k, res := range groups {
+		rows = append(rows, groupRow{key: k, count: res.Count(), res: res})
+	}
+	sort.Slice(rows, func(a, b int) bool {
+		if rows[a].count != rows[b].count {
+			return rows[a].count > rows[b].count
+		}
+		return rows[a].key < rows[b].key
+	})
+	m.groupField = field
+	m.groupRows = rows
+	m.groupCursor = 0
+	m.mode = ModeGroup
+}
+
+// updateGroup navigates the group list; enter filters the table to the
+// selected value's subset; esc/q closes.
+func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "a":
+		m.mode = ModeList
+	case "j", "down":
+		if m.groupCursor < len(m.groupRows)-1 {
+			m.groupCursor++
+		}
+	case "k", "up":
+		if m.groupCursor > 0 {
+			m.groupCursor--
+		}
+	case "g":
+		m.groupCursor = 0
+	case "G":
+		m.groupCursor = len(m.groupRows) - 1
+	case "enter":
+		if m.groupCursor < len(m.groupRows) {
+			gr := m.groupRows[m.groupCursor]
+			m.result = gr.res
+			m.page, m.cursor = 1, 0
+			m.status = "filtered: " + m.groupField + "=" + gr.key
+			m.mode = ModeList
+		}
+	}
+	return m, nil
 }
 
 func (m *Model) Close() error { return m.col.Close() }

@@ -697,3 +697,50 @@ func TestDetailSearch(t *testing.T) {
 		t.Errorf("after esc mode = %v, want ModeList", m.mode)
 	}
 }
+
+func TestStatsAndGroup(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"p":"a","n":10}
+{"p":"a","n":20}
+{"p":"b","n":30}
+{"p":"a","n":40}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.focus = FocusTable
+
+	// stats on n
+	m.openStats("n")
+	if m.mode != ModeStats {
+		t.Fatalf("mode = %v, want ModeStats", m.mode)
+	}
+	s := m.stats
+	if s.count != 4 || s.min != 10 || s.max != 40 || s.sum != 100 || s.mean != 25 || s.median != 25 {
+		t.Errorf("stats = %+v", s)
+	}
+	// non-numeric column → status, stays list
+	m.mode = ModeList
+	m.openStats("p")
+	if m.mode == ModeStats {
+		t.Errorf("openStats on non-numeric should not open popup")
+	}
+
+	// group on p
+	m.openGroup("p")
+	if m.mode != ModeGroup {
+		t.Fatalf("mode = %v, want ModeGroup", m.mode)
+	}
+	if len(m.groupRows) != 2 {
+		t.Fatalf("groupRows = %d, want 2", len(m.groupRows))
+	}
+	if m.groupRows[0].key != "a" || m.groupRows[0].count != 3 {
+		t.Errorf("top group = %s/%d, want a/3", m.groupRows[0].key, m.groupRows[0].count)
+	}
+	// enter filters to that group's subset
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != ModeList || m.result.Count() != 3 {
+		t.Errorf("after group enter: mode=%v count=%d, want ModeList/3", m.mode, m.result.Count())
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,12 @@ func (m *Model) render() string {
 	}
 	if m.mode == ModeColumns {
 		return m.renderColumns(w, h)
+	}
+	if m.mode == ModeStats {
+		return m.renderStats(w, h)
+	}
+	if m.mode == ModeGroup {
+		return m.renderGroup(w, h)
 	}
 	if m.mode == ModeDetail || m.mode == ModeDetailSearch {
 		return m.renderDetail(w, h)
@@ -371,6 +378,94 @@ func isDateString(s string) bool {
 		}
 	}
 	return false
+}
+
+// docFloat extracts a numeric value at field (plain or dotted) from a doc.
+func docFloat(d jsonldb.Doc, field string) (float64, bool) {
+	var v any
+	var ok bool
+	if strings.Contains(field, ".") {
+		v, ok = d.Path(field)
+	} else {
+		v, ok = d.Get(field)
+	}
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case json.Number:
+		f, e := n.Float64()
+		return f, e == nil
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// fmtNum formats a float without trailing zeros.
+func fmtNum(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+func (m *Model) renderStats(w, h int) string {
+	s := m.stats
+	var b strings.Builder
+	b.WriteString(styleApp.Render("Stats") + styleMuted.Render("  "+s.field) + "\n")
+	b.WriteString(gradientRule(34) + "\n")
+	rows := [][2]string{
+		{"count", fmt.Sprintf("%d", s.count)},
+		{"min", fmtNum(s.min)},
+		{"max", fmtNum(s.max)},
+		{"sum", fmtNum(s.sum)},
+		{"mean", fmtNum(s.mean)},
+		{"median", fmtNum(s.median)},
+	}
+	for _, kv := range rows {
+		b.WriteString(styleKey.Render(cell(kv[0], 9)) + styleNum.Render(kv[1]) + "\n")
+	}
+	b.WriteString("\n" + styleMuted.Render("any key to close"))
+	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m *Model) renderGroup(w, h int) string {
+	var b strings.Builder
+	b.WriteString(styleApp.Render("Group by ") + styleHeader.Render(m.groupField) +
+		styleMuted.Render(fmt.Sprintf("   %d groups · ↵ filter · esc close", len(m.groupRows))) + "\n")
+	b.WriteString(gradientRule(54) + "\n")
+	listH := h - 10
+	if listH < 4 {
+		listH = 4
+	}
+	start := 0
+	if m.groupCursor >= listH {
+		start = m.groupCursor - listH + 1
+	}
+	maxCount := 1
+	if len(m.groupRows) > 0 {
+		maxCount = m.groupRows[0].count
+	}
+	for i := start; i < len(m.groupRows) && i < start+listH; i++ {
+		gr := m.groupRows[i]
+		mark := "  "
+		key := styleText.Render(cell(gr.key, 22))
+		if i == m.groupCursor {
+			mark = styleGutter.Render("▌ ")
+			key = styleSel.Render(cell(gr.key, 22))
+		}
+		barW := gr.count * 18 / maxCount
+		if barW < 1 && gr.count > 0 {
+			barW = 1
+		}
+		bar := styleScrollThumb.Render(strings.Repeat("█", barW))
+		b.WriteString(mark + key + " " + styleNum.Render(fmt.Sprintf("%6d", gr.count)) + " " + bar + "\n")
+	}
+	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
 func scalarStr(v any) string {
