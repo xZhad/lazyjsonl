@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -68,8 +70,10 @@ type Model struct {
 	drillStack [][]string
 	drillCrumb []string
 	// presentation
-	frame        int // animation frame for the title shimmer
-	detailScroll int // top line offset in the detail view
+	frame int // animation frame for the title shimmer
+	// bubbles components
+	filterInput textinput.Model
+	detailVP    viewport.Model
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -116,6 +120,14 @@ func New(path string) (*Model, error) {
 	if len(files) > 1 {
 		m.focus = FocusFiles
 	}
+
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.SetVirtualCursor(true) // we run in alt-screen; draw our own cursor
+	ti.SetStyles(filterInputStyles())
+	m.filterInput = ti
+	m.detailVP = viewport.New()
+
 	if err := m.openCurrent(); err != nil {
 		return nil, err
 	}
@@ -262,6 +274,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = 0
 			}
 		}
+		m.sizeDetailVP()
 		return m, nil
 	case tea.KeyPressMsg:
 		switch m.mode {
@@ -277,7 +290,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateColumns(msg)
 		}
 	}
+	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
+	// component so its internal state keeps ticking.
+	switch m.mode {
+	case ModeFilter:
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(msg)
+		return m, cmd
+	case ModeDetail:
+		var cmd tea.Cmd
+		m.detailVP, cmd = m.detailVP.Update(msg)
+		return m, cmd
+	}
 	return m, nil
+}
+
+// sizeDetailVP keeps the detail viewport sized to the window: full width minus
+// the pane border and the scrollbar column; height minus border, title, footer.
+func (m *Model) sizeDetailVP() {
+	w := m.width - 2 - 1
+	if w < 1 {
+		w = 1
+	}
+	h := m.height - 4
+	if h < 1 {
+		h = 1
+	}
+	m.detailVP.SetWidth(w)
+	m.detailVP.SetHeight(h)
 }
 
 func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -354,8 +394,11 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "/":
 		m.filterSaved = m.filter
+		m.filterInput.SetValue(m.filter)
+		m.filterInput.CursorEnd()
+		cmd := m.filterInput.Focus()
 		m.mode = ModeFilter
-		return m, nil
+		return m, cmd
 	case "esc":
 		if m.filter != "" {
 			m.filter = ""
@@ -417,7 +460,9 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if d, ok := m.selectedDoc(); ok {
 			m.detail = d
-			m.detailScroll = 0
+			m.sizeDetailVP()
+			m.detailVP.SetContent(detailContent(d))
+			m.detailVP.GotoTop()
 			m.mode = ModeDetail
 		}
 	case "r":
@@ -430,59 +475,44 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// detailLineCount / detailViewHeight back the detail scroll math; defined in
-// view.go's renderDetail. updateDetail scrolls the pretty-printed JSON.
+// updateDetail scrolls the record viewport. esc/q/enter exit; g/G jump to
+// the ends; all other keys (j/k, ctrl-d/u, pgup/pgdn, space) are handled by
+// the viewport's own keymap.
 func (m *Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	max := m.detailMaxScroll()
 	switch msg.String() {
 	case "esc", "q", "enter", "ctrl+c":
 		m.mode = ModeList
-	case "j", "down":
-		if m.detailScroll < max {
-			m.detailScroll++
-		}
-	case "k", "up":
-		if m.detailScroll > 0 {
-			m.detailScroll--
-		}
-	case "ctrl+d", "pgdown", " ", "space":
-		m.detailScroll += 10
-		if m.detailScroll > max {
-			m.detailScroll = max
-		}
-	case "ctrl+u", "pgup":
-		m.detailScroll -= 10
-		if m.detailScroll < 0 {
-			m.detailScroll = 0
-		}
+		return m, nil
 	case "g":
-		m.detailScroll = 0
+		m.detailVP.GotoTop()
+		return m, nil
 	case "G":
-		m.detailScroll = max
+		m.detailVP.GotoBottom()
+		return m, nil
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.detailVP, cmd = m.detailVP.Update(msg)
+	return m, cmd
 }
 
 func (m *Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		m.applyFilter()
+		m.filter = m.filterInput.Value()
+		m.applyFilter() // sets mode=ModeList on success; stays on parse error
+		if m.mode == ModeList {
+			m.filterInput.Blur()
+		}
 		return m, nil
 	case "esc":
 		m.filter = m.filterSaved
+		m.filterInput.Blur()
 		m.mode = ModeList
 		return m, nil
-	case "backspace":
-		if len(m.filter) > 0 {
-			m.filter = m.filter[:len(m.filter)-1]
-		}
-		return m, nil
-	default:
-		if msg.Text != "" {
-			m.filter += msg.Text
-		}
-		return m, nil
 	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	return m, cmd
 }
 
 func (m *Model) applyFilter() {

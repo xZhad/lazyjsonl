@@ -192,17 +192,18 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		var content string
 		switch {
 		case j < len(rows):
-			vals := rowCells(rows[j], cols)
 			if j == m.cursor {
 				row := styleSelGut.Render("▌ ")
-				for _, v := range vals {
-					row += styleSel.Render(cell(v, colW) + " ")
+				for _, c := range cols {
+					txt, _ := cellValue(rows[j], c)
+					row += styleSel.Render(cell(txt, colW) + " ")
 				}
 				content = styleSel.Width(contentW).Render(row)
 			} else {
 				row := "  "
-				for _, v := range vals {
-					row += styleText.Render(cell(v, colW) + " ")
+				for _, c := range cols {
+					txt, st := cellValue(rows[j], c)
+					row += st.Render(cell(txt, colW) + " ")
 				}
 				content = padTo(row, contentW)
 			}
@@ -218,24 +219,38 @@ func (m *Model) tablePane(w, h int, active bool) string {
 	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
 }
 
-func rowCells(d jsonldb.Doc, cols []string) []string {
-	out := make([]string, len(cols))
-	for i, c := range cols {
-		if strings.Contains(c, ".") { // nested (dotted) column
-			if raw, ok := d.Path(c); ok {
-				out[i] = scalarStr(raw)
-			}
-			continue
-		}
-		v := d.GetString(c)
-		if v == "" {
-			if raw, ok := d.Get(c); ok {
-				v = scalarStr(raw)
-			}
-		}
-		out[i] = v
+// cellValue resolves a column's value for a row and the style to draw it in
+// (numbers cyan, booleans green/red, null dim, objects/arrays yellow).
+func cellValue(d jsonldb.Doc, col string) (string, lipgloss.Style) {
+	var raw any
+	var ok bool
+	if strings.Contains(col, ".") {
+		raw, ok = d.Path(col)
+	} else {
+		raw, ok = d.Get(col)
 	}
-	return out
+	if !ok {
+		return "", styleText
+	}
+	return scalarStr(raw), valueStyle(raw)
+}
+
+func valueStyle(v any) lipgloss.Style {
+	switch x := v.(type) {
+	case nil:
+		return styleNull
+	case bool:
+		if x {
+			return styleBoolTrue
+		}
+		return styleBoolFls
+	case json.Number, float64, int, int64:
+		return styleNum
+	case map[string]any, []any:
+		return styleObj
+	default:
+		return styleText
+	}
 }
 
 func scalarStr(v any) string {
@@ -252,7 +267,7 @@ func scalarStr(v any) string {
 func (m *Model) renderFooter(w int) string {
 	switch m.mode {
 	case ModeFilter:
-		s := styleKey.Render(" / ") + styleText.Render(m.filter) + styleCursor.Render(" ")
+		s := styleKey.Render(" / ") + m.filterInput.View()
 		if m.filterErr != nil {
 			s += "  " + styleDanger.Render(m.filterErr.Error())
 		}
@@ -281,52 +296,34 @@ func (m *Model) renderFooter(w int) string {
 	return bar(w, left, right)
 }
 
-// detailBody splits the pretty-printed record into display lines.
-func (m *Model) detailBody() []string {
-	return strings.Split(prettyJSON(m.detail.Raw()), "\n")
-}
-
-// detailViewH is the number of JSON lines visible at once: box height
-// (h-1) minus its border (2) minus the RECORD title line (1).
-func (m *Model) detailViewH() int {
-	vh := m.height - 4
-	if vh < 1 {
-		vh = 1
-	}
-	return vh
-}
-
-func (m *Model) detailMaxScroll() int {
-	if mx := len(m.detailBody()) - m.detailViewH(); mx > 0 {
-		return mx
-	}
-	return 0
+// detailContent pretty-prints a record for the detail viewport.
+func detailContent(d jsonldb.Doc) string {
+	return styleText.Render(prettyJSON(d.Raw()))
 }
 
 func (m *Model) renderDetail(w, h int) string {
-	allLines := m.detailBody()
-	viewH := m.detailViewH()
 	inner := w - 2
 	contentW := inner - 1
 	if contentW < 2 {
 		contentW = 2
 	}
-	start := m.detailScroll
-	if mx := m.detailMaxScroll(); start > mx {
-		start = mx
-	}
-	sb := scrollbar(viewH, len(allLines), viewH, start)
+	vh := m.detailVP.Height()
+	total := m.detailVP.TotalLineCount()
+	off := m.detailVP.YOffset()
+	sb := scrollbar(vh, total, vh, off)
+
 	title := paneTitle(true, "RECORD")
-	if mx := m.detailMaxScroll(); mx > 0 {
+	if total > vh {
 		title += styleScrollHint.Render(fmt.Sprintf("   line %d–%d / %d",
-			start+1, min(start+viewH, len(allLines)), len(allLines)))
+			off+1, min(off+vh, total), total))
 	}
+
+	vpLines := strings.Split(m.detailVP.View(), "\n")
 	lines := []string{padTo(title, contentW) + " "}
-	for j := 0; j < viewH; j++ {
-		i := start + j
+	for j := 0; j < vh; j++ {
 		var content string
-		if i < len(allLines) {
-			content = padTo(styleText.Render(cell(allLines[i], contentW)), contentW)
+		if j < len(vpLines) {
+			content = padTo(vpLines[j], contentW)
 		} else {
 			content = padTo("", contentW)
 		}
@@ -337,8 +334,8 @@ func (m *Model) renderDetail(w, h int) string {
 		lines = append(lines, content+sc)
 	}
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(strings.Join(lines, "\n"))
-	hint := " " + keyHint("j/k", "scroll") + keyHint("g/G", "top/end") +
-		keyHint("esc", "back") + keyHint("q", "quit")
+	hint := " " + keyHint("j/k", "scroll") + keyHint("d/u", "½ page") +
+		keyHint("g/G", "top/end") + keyHint("esc", "back") + keyHint("q", "quit")
 	footer := styleFooter.Width(w).Render(hint)
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
 }
@@ -366,7 +363,8 @@ func (m *Model) renderHelp(w, h int) string {
 		{"q / ctrl+c", "quit"},
 	}
 	var b strings.Builder
-	b.WriteString(styleApp.Render("lazyjsonl") + styleMuted.Render(" · keybindings") + "\n\n")
+	b.WriteString(styleApp.Render("lazyjsonl") + styleMuted.Render(" · keybindings") + "\n")
+	b.WriteString(gradientRule(52) + "\n")
 	for _, kv := range rows {
 		b.WriteString(styleKey.Render(cell(kv[0], 14)) + styleText.Render(kv[1]) + "\n")
 	}
@@ -382,7 +380,8 @@ func (m *Model) renderHelp(w, h int) string {
 func (m *Model) renderColumns(w, h int) string {
 	var b strings.Builder
 	b.WriteString(styleApp.Render("Columns") +
-		styleMuted.Render("   space toggle · a all · N none · ↵ apply · esc cancel") + "\n\n")
+		styleMuted.Render("   space toggle · a all · N none · ↵ apply · esc cancel") + "\n")
+	b.WriteString(gradientRule(58) + "\n")
 	listH := h - 8
 	if listH < 4 {
 		listH = 4

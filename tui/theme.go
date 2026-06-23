@@ -1,6 +1,11 @@
 package tui
 
-import "charm.land/lipgloss/v2"
+import (
+	"strings"
+
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
+)
 
 // Palette — synthwave, from the user's WezTerm theme.
 var (
@@ -35,21 +40,51 @@ var (
 	styleSelGut  = lipgloss.NewStyle().Foreground(cMagenta).Background(cSelBg).Bold(true)
 	styleTitleBar = lipgloss.NewStyle().Background(cBar)
 	styleFooter   = lipgloss.NewStyle().Background(cBar).Foreground(cMuted)
-	styleCursor   = lipgloss.NewStyle().Background(cMagenta).Foreground(cBg) // block cursor
 	styleOverlay  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cViolet).
 			Background(cBg).Padding(1, 3)
 	styleScrollThumb = lipgloss.NewStyle().Foreground(cViolet).Bold(true)
 	styleScrollTrack = lipgloss.NewStyle().Foreground(cIdle)
 	styleScrollHint  = lipgloss.NewStyle().Foreground(cMuted)
+
+	// value coloring (JSON-ish syntax highlight in table cells)
+	styleNum      = lipgloss.NewStyle().Foreground(cCyan)
+	styleBoolTrue = lipgloss.NewStyle().Foreground(cGreen)
+	styleBoolFls  = lipgloss.NewStyle().Foreground(cRed)
+	styleNull     = lipgloss.NewStyle().Foreground(cIdle).Italic(true)
+	styleObj      = lipgloss.NewStyle().Foreground(cYellow) // maps/arrays — hints "divable"
 )
 
-// pane returns a box style, violet-bordered when focused, dim-purple when idle.
+// pane returns a box style: a thick violet border when focused, a dim rounded
+// border when idle — border shape and color both signal focus.
 func pane(active bool) lipgloss.Style {
-	bc := cIdle
 	if active {
-		bc = cViolet
+		return lipgloss.NewStyle().Border(lipgloss.ThickBorder()).BorderForeground(cViolet)
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(bc)
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIdle)
+}
+
+// gradientRule draws a w-wide horizontal rule with a static synthwave ramp.
+func gradientRule(w int) string {
+	if w <= 0 {
+		return ""
+	}
+	ramp := lipgloss.Blend1D(w, cMagenta, cViolet, cCyan)
+	var b strings.Builder
+	for i := 0; i < w; i++ {
+		b.WriteString(lipgloss.NewStyle().Foreground(ramp[i]).Render("─"))
+	}
+	return b.String()
+}
+
+// filterInputStyles themes the filter text input to the synthwave palette.
+func filterInputStyles() textinput.Styles {
+	s := textinput.DefaultDarkStyles()
+	s.Focused.Text = lipgloss.NewStyle().Foreground(cFg)
+	s.Focused.Prompt = lipgloss.NewStyle().Foreground(cCyan)
+	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(cIdle)
+	s.Cursor.Color = cMagenta
+	s.Cursor.Blink = true
+	return s
 }
 
 func paneTitle(active bool, s string) string {

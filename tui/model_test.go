@@ -194,7 +194,7 @@ func TestFilterApplyAndError(t *testing.T) {
 	// bad filter: keeps prior result, sets error
 	mi, _ = m.Update(key('/'))
 	m = mi.(*Model)
-	m.filter = "done="
+	m.filterInput.SetValue("done=")
 	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(*Model)
 	if m.filterErr == nil {
@@ -238,13 +238,14 @@ func TestFilterEscRestores(t *testing.T) {
 		t.Fatalf("filterSaved = %q, want 'done=true'", m.filterSaved)
 	}
 
-	// Type extra characters: "extra" -> filter becomes "done=trueextra"
+	// Type extra characters into the input: value -> "done=trueextra".
+	// (m.filter holds the *applied* filter and only changes on enter.)
 	for _, r := range "extra" {
 		mi, _ = m.Update(key(r))
 		m = mi.(*Model)
 	}
-	if m.filter != "done=trueextra" {
-		t.Fatalf("filter after typing = %q, want 'done=trueextra'", m.filter)
+	if got := m.filterInput.Value(); got != "done=trueextra" {
+		t.Fatalf("input value after typing = %q, want 'done=trueextra'", got)
 	}
 
 	// Press esc: filter should be restored to filterSaved ("done=true"), mode should be ModeList
