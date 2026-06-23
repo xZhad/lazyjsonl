@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
 )
@@ -76,6 +77,19 @@ func gradientRule(w int) string {
 		b.WriteString(lipgloss.NewStyle().Foreground(ramp[i]).Render("─"))
 	}
 	return b.String()
+}
+
+// helpStyles themes the bubbles help component to the synthwave palette.
+func helpStyles() help.Styles {
+	s := help.DefaultDarkStyles()
+	s.ShortKey = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	s.ShortDesc = lipgloss.NewStyle().Foreground(cMuted)
+	s.ShortSeparator = lipgloss.NewStyle().Foreground(cIdle)
+	s.FullKey = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	s.FullDesc = lipgloss.NewStyle().Foreground(cFg)
+	s.FullSeparator = lipgloss.NewStyle().Foreground(cIdle)
+	s.Ellipsis = lipgloss.NewStyle().Foreground(cIdle)
+	return s
 }
 
 // filterInputStyles themes the filter text input to the synthwave palette.

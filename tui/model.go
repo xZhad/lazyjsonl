@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -78,6 +79,8 @@ type Model struct {
 	// files search
 	fileFilter string
 	fileInput  textinput.Model
+	// help
+	help help.Model
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -136,6 +139,10 @@ func New(path string) (*Model, error) {
 	fi.SetVirtualCursor(true)
 	fi.SetStyles(filterInputStyles())
 	m.fileInput = fi
+
+	h := help.New()
+	h.Styles = helpStyles()
+	m.help = h
 
 	m.detailVP = viewport.New()
 

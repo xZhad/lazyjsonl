@@ -327,11 +327,12 @@ func (m *Model) renderFooter(w int) string {
 			return styleFooter.Width(w).Render(s)
 		}
 	}
-	left := " " + keyHint("j/k", "move") + keyHint("/", "filter") + keyHint("↵", "view") +
-		keyHint("s", "sort") + keyHint("space", "dive") + keyHint("c", "cols") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
-	if len(m.drillPath) > 0 {
-		left = " " + keyHint("⌫", "back") + keyHint("space", "dive") + keyHint("s", "sort") + keyHint("/", "filter") + keyHint("c", "cols") + keyHint("?", "help") + keyHint("q", "quit")
+	rightW := 16
+	if m.status != "" {
+		rightW += len(m.status) + 4
 	}
+	m.help.SetWidth(w - rightW)
+	left := " " + m.help.ShortHelpView(m.shortKeys())
 	right := ""
 	if m.status != "" {
 		st := styleOK
@@ -389,35 +390,12 @@ func (m *Model) renderDetail(w, h int) string {
 }
 
 func (m *Model) renderHelp(w, h int) string {
-	rows := [][2]string{
-		{"j / k  ↑ ↓", "move cursor (in focused pane)"},
-		{"h / l  ← →", "previous / next page"},
-		{"g / G", "first / last page"},
-		{"H / L  ⌥ ← →", "move column cursor"},
-		{"s", "sort by column (toggles ▲/▼)"},
-		{"J / K", "next / previous file"},
-		{"tab", "switch focus (files ↔ table)"},
-		{"space", "dive into focused object column"},
-		{"backspace", "back out of a dive"},
-		{"enter", "open record detail (j/k scrolls it)"},
-		{"/", "filter records — or search files (on files pane)"},
-		{"esc", "clear filter / search"},
-		{"c", "choose columns (incl. nested fields)"},
-		{"mouse wheel", "scroll list / files / record"},
-		{"d", "delete record (confirm)"},
-		{"e", "export view → .export.jsonl"},
-		{"y", "yank record JSON to clipboard"},
-		{"r", "reload from disk"},
-		{"?", "toggle this help"},
-		{"q / ctrl+c", "quit"},
-	}
+	m.help.ShowAll = true
 	var b strings.Builder
 	b.WriteString(styleApp.Render("lazyjsonl") + styleMuted.Render(" · keybindings") + "\n")
-	b.WriteString(gradientRule(52) + "\n")
-	for _, kv := range rows {
-		b.WriteString(styleKey.Render(cell(kv[0], 14)) + styleText.Render(kv[1]) + "\n")
-	}
-	b.WriteString("\n" + styleMuted.Render("filter: ") +
+	b.WriteString(gradientRule(60) + "\n\n")
+	b.WriteString(m.help.FullHelpView(fullGroups()))
+	b.WriteString("\n\n" + styleMuted.Render("filter: ") +
 		styleHeader.Render("done=true") + styleMuted.Render("  ") +
 		styleHeader.Render("topic~=ml") + styleMuted.Render("  ") +
 		styleHeader.Render("a=1 (b=2 |= c=3)") + styleMuted.Render("  ") +

@@ -10,7 +10,7 @@ import (
 	"github.com/xZhad/jsonldb"
 )
 
-func key(r rune) tea.KeyPressMsg {
+func kp(r rune) tea.KeyPressMsg {
 	if r >= 'A' && r <= 'Z' {
 		return tea.KeyPressMsg{Code: rune(r - 'A' + 'a'), Text: string(r), Mod: tea.ModShift}
 	}
@@ -23,19 +23,19 @@ func TestListNavigation(t *testing.T) {
 	m.pageSize = 2 // 3 docs -> 2 pages
 
 	// down moves cursor
-	mi, _ := m.Update(key('j'))
+	mi, _ := m.Update(kp('j'))
 	m = mi.(*Model)
 	if m.cursor != 1 {
 		t.Errorf("cursor after j = %d, want 1", m.cursor)
 	}
 	// down clamps within page (page 1 has 2 rows: indices 0,1)
-	mi, _ = m.Update(key('j'))
+	mi, _ = m.Update(kp('j'))
 	m = mi.(*Model)
 	if m.cursor != 1 {
 		t.Errorf("cursor clamped = %d, want 1", m.cursor)
 	}
 	// next page
-	mi, _ = m.Update(key('l'))
+	mi, _ = m.Update(kp('l'))
 	m = mi.(*Model)
 	if m.page != 2 {
 		t.Errorf("page after l = %d, want 2", m.page)
@@ -47,7 +47,7 @@ func TestListNavigation(t *testing.T) {
 		t.Errorf("page 2 rows = %d, want 1", len(m.pageRows()))
 	}
 	// next page clamps (only 2 pages)
-	mi, _ = m.Update(key('l'))
+	mi, _ = m.Update(kp('l'))
 	m = mi.(*Model)
 	if m.page != 2 {
 		t.Errorf("page clamped = %d, want 2", m.page)
@@ -87,10 +87,10 @@ func TestFileSwitching(t *testing.T) {
 		t.Fatalf("initial count = %d, want 2 (a.jsonl)", m.result.Count())
 	}
 	// tab toggles focus
-	mi, _ := m.Update(key('\t'))
+	mi, _ := m.Update(kp('\t'))
 	_ = mi
 	// J -> next file (b.jsonl), 1 doc, fresh result
-	mi, _ = m.Update(key('J'))
+	mi, _ = m.Update(kp('J'))
 	m = mi.(*Model)
 	if m.fileIdx != 1 {
 		t.Errorf("fileIdx after J = %d, want 1", m.fileIdx)
@@ -99,13 +99,13 @@ func TestFileSwitching(t *testing.T) {
 		t.Errorf("count after switch = %d, want 1 (b.jsonl)", m.result.Count())
 	}
 	// J again clamps (only 2 files)
-	mi, _ = m.Update(key('J'))
+	mi, _ = m.Update(kp('J'))
 	m = mi.(*Model)
 	if m.fileIdx != 1 {
 		t.Errorf("fileIdx clamped = %d, want 1", m.fileIdx)
 	}
 	// K -> back to a.jsonl
-	mi, _ = m.Update(key('K'))
+	mi, _ = m.Update(kp('K'))
 	m = mi.(*Model)
 	if m.fileIdx != 0 || m.result.Count() != 2 {
 		t.Errorf("after K: fileIdx=%d count=%d, want 0/2", m.fileIdx, m.result.Count())
@@ -169,14 +169,14 @@ func TestFilterApplyAndError(t *testing.T) {
 	defer m.col.Close()
 
 	// enter filter mode
-	mi, _ := m.Update(key('/'))
+	mi, _ := m.Update(kp('/'))
 	m = mi.(*Model)
 	if m.mode != ModeFilter {
 		t.Fatalf("mode = %v, want ModeFilter", m.mode)
 	}
 	// type "done=true"
 	for _, r := range "done=true" {
-		mi, _ = m.Update(key(r))
+		mi, _ = m.Update(kp(r))
 		m = mi.(*Model)
 	}
 	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -192,7 +192,7 @@ func TestFilterApplyAndError(t *testing.T) {
 	}
 
 	// bad filter: keeps prior result, sets error
-	mi, _ = m.Update(key('/'))
+	mi, _ = m.Update(kp('/'))
 	m = mi.(*Model)
 	m.filterInput.SetValue("done=")
 	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -213,10 +213,10 @@ func TestFilterEscRestores(t *testing.T) {
 	defer m.col.Close()
 
 	// Apply an initial filter to have a known prior filter value
-	mi, _ := m.Update(key('/'))
+	mi, _ := m.Update(kp('/'))
 	m = mi.(*Model)
 	for _, r := range "done=true" {
-		mi, _ = m.Update(key(r))
+		mi, _ = m.Update(kp(r))
 		m = mi.(*Model)
 	}
 	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -229,7 +229,7 @@ func TestFilterEscRestores(t *testing.T) {
 	}
 
 	// Enter filter mode again (filterSaved should be "done=true")
-	mi, _ = m.Update(key('/'))
+	mi, _ = m.Update(kp('/'))
 	m = mi.(*Model)
 	if m.mode != ModeFilter {
 		t.Fatalf("mode = %v, want ModeFilter", m.mode)
@@ -241,7 +241,7 @@ func TestFilterEscRestores(t *testing.T) {
 	// Type extra characters into the input: value -> "done=trueextra".
 	// (m.filter holds the *applied* filter and only changes on enter.)
 	for _, r := range "extra" {
-		mi, _ = m.Update(key(r))
+		mi, _ = m.Update(kp(r))
 		m = mi.(*Model)
 	}
 	if got := m.filterInput.Value(); got != "done=trueextra" {
@@ -275,21 +275,21 @@ func TestColumnSort(t *testing.T) {
 		t.Fatal("dur not in columns")
 	}
 	for i := 0; i < durIdx; i++ {
-		mi, _ := m.Update(key('L'))
+		mi, _ := m.Update(kp('L'))
 		m = mi.(*Model)
 	}
 	if m.colCursor != durIdx {
 		t.Fatalf("colCursor = %d, want %d", m.colCursor, durIdx)
 	}
 	// sort ascending by dur
-	mi, _ := m.Update(key('s'))
+	mi, _ := m.Update(kp('s'))
 	m = mi.(*Model)
 	rows := m.pageRows()
 	if rows[0].GetString("id") != "b" { // dur 900 is smallest
 		t.Errorf("asc sort first id = %q, want b", rows[0].GetString("id"))
 	}
 	// sort again toggles to desc
-	mi, _ = m.Update(key('s'))
+	mi, _ = m.Update(kp('s'))
 	m = mi.(*Model)
 	rows = m.pageRows()
 	if rows[0].GetString("id") != "a" { // dur 1500 largest
@@ -302,12 +302,12 @@ func TestDeleteRow(t *testing.T) {
 	defer m.col.Close()
 	m.pageSize = 10
 	// cursor on first row (id "a"), delete it
-	mi, _ := m.Update(key('d'))
+	mi, _ := m.Update(kp('d'))
 	m = mi.(*Model)
 	if m.mode != ModeConfirm {
 		t.Fatalf("mode = %v, want ModeConfirm", m.mode)
 	}
-	mi, _ = m.Update(key('y'))
+	mi, _ = m.Update(kp('y'))
 	m = mi.(*Model)
 	if m.mode != ModeList {
 		t.Errorf("mode after confirm = %v, want ModeList", m.mode)
@@ -324,7 +324,7 @@ func TestColumnPicker(t *testing.T) {
 	m, _ := New(fixture(t))
 	defer m.col.Close()
 	// c opens the picker, preselecting current columns
-	mi, _ := m.Update(key('c'))
+	mi, _ := m.Update(kp('c'))
 	m = mi.(*Model)
 	if m.mode != ModeColumns {
 		t.Fatalf("c should open column picker, mode=%v", m.mode)
@@ -334,7 +334,7 @@ func TestColumnPicker(t *testing.T) {
 	}
 	// toggle the first candidate off, then apply with enter
 	first := m.pickList[0].key
-	mi, _ = m.Update(key(' ')) // space toggles
+	mi, _ = m.Update(kp(' ')) // space toggles
 	m = mi.(*Model)
 	if m.picked[first] {
 		t.Errorf("space should have toggled %q off", first)
@@ -354,7 +354,7 @@ func TestColumnPicker(t *testing.T) {
 func TestHelpToggle(t *testing.T) {
 	m, _ := New(fixture(t))
 	defer m.col.Close()
-	mi, _ := m.Update(key('?'))
+	mi, _ := m.Update(kp('?'))
 	m = mi.(*Model)
 	if !m.showHelp {
 		t.Errorf("? should toggle help on")
@@ -380,7 +380,7 @@ func TestExportKey(t *testing.T) {
 	m.pageSize = 10
 
 	// Press 'e' to export current view
-	mi, _ := m.Update(key('e'))
+	mi, _ := m.Update(kp('e'))
 	m = mi.(*Model)
 
 	// status should be set to "exported to ..."
@@ -426,7 +426,7 @@ func TestDetailAndReload(t *testing.T) {
 		t.Errorf("esc should return to list, got %v", m.mode)
 	}
 	// reload is a no-op here but must not error or change count
-	mi, _ = m.Update(key('r'))
+	mi, _ = m.Update(kp('r'))
 	m = mi.(*Model)
 	if m.result.Count() != 3 {
 		t.Errorf("count after reload = %d, want 3", m.result.Count())
@@ -443,7 +443,7 @@ func TestDrillIntoColumn(t *testing.T) {
 	m.showAllColumns = true
 	m.columns = []string{"id", "message"}
 	m.colCursor = 1 // focus the message (object) column
-	mi, _ := m.Update(key(' '))
+	mi, _ := m.Update(kp(' '))
 	m = mi.(*Model)
 	got := strings.Join(m.columns, ",")
 	if !strings.Contains(got, "message.role") || !strings.Contains(got, "message.content") {
@@ -469,7 +469,7 @@ func TestPickerInDrillListsSubfields(t *testing.T) {
 	m.showAllColumns = true
 	m.columns = []string{"id", "message"}
 	m.colCursor = 1
-	mi, _ := m.Update(key(' ')) // dive into message
+	mi, _ := m.Update(kp(' ')) // dive into message
 	m = mi.(*Model)
 	m.openColumnPicker()
 	if len(m.pickList) == 0 {
@@ -504,14 +504,14 @@ func TestMultiLevelDrillTrim(t *testing.T) {
 	m.showAllColumns = true
 	m.columns = []string{"id", "message"}
 	m.colCursor = 1
-	m = send(m, key(' ')) // dive into message → message.role, message.usage, ...
+	m = send(m, kp(' ')) // dive into message → message.role, message.usage, ...
 	// focus message.usage and dive again
 	for i, c := range m.columns {
 		if c == "message.usage" {
 			m.colCursor = i
 		}
 	}
-	m = send(m, key(' ')) // dive into message.usage → message.usage.input/output
+	m = send(m, kp(' ')) // dive into message.usage → message.usage.input/output
 	if got := strings.Join(m.columns, ","); !strings.Contains(got, "message.usage.input") {
 		t.Fatalf("level-2 columns = %v", m.columns)
 	}
@@ -535,12 +535,12 @@ func TestFileSearch(t *testing.T) {
 	m, _ := New(dir)
 	defer m.col.Close()
 	m.focus = FocusFiles
-	m = send(m, key('/'))
+	m = send(m, kp('/'))
 	if m.mode != ModeFileSearch {
 		t.Fatalf("mode = %v, want ModeFileSearch", m.mode)
 	}
 	for _, r := range "bet" {
-		m = send(m, key(r))
+		m = send(m, kp(r))
 	}
 	cf := m.curFiles()
 	if len(cf) != 1 || filepath.Base(cf[0]) != "beta.jsonl" {
@@ -552,7 +552,7 @@ func TestFileSearch(t *testing.T) {
 	}
 	// esc clears the filter back to all files
 	m.focus = FocusFiles
-	m = send(m, key('/'))
+	m = send(m, kp('/'))
 	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if len(m.curFiles()) != 3 {
 		t.Errorf("after esc curFiles = %d, want 3", len(m.curFiles()))
