@@ -73,3 +73,14 @@ func TestViewShowsFilesPane(t *testing.T) {
 		}
 	}
 }
+
+func TestViewAltScreen(t *testing.T) {
+	m, err := New(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.col.Close()
+	if !m.View().AltScreen {
+		t.Error("View().AltScreen must be true (full-screen TUI)")
+	}
+}

@@ -22,12 +22,16 @@ func cell(s string, w int) string {
 }
 
 func (m *Model) View() tea.View {
+	var content string
 	switch m.mode {
 	case ModeDetail:
-		return tea.NewView(m.viewDetail())
+		content = m.viewDetail()
 	default:
-		return tea.NewView(m.viewList())
+		content = m.viewList()
 	}
+	v := tea.NewView(content)
+	v.AltScreen = true // full-screen (v2: alt-screen is a View field, not a program option)
+	return v
 }
 
 func (m *Model) viewList() string {
