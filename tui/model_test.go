@@ -900,3 +900,46 @@ func TestHeatmapChart(t *testing.T) {
 		t.Errorf("heatmap render missing axis label:\n%s", out)
 	}
 }
+
+func TestGroupFilterAndChartEntry(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"cat":"books","n":1}
+{"cat":"books","n":2}
+{"cat":"toys","n":3}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 90, Height: 18})
+	m.focus = FocusTable
+
+	// group → v lands on the Measure picker (step 1), not straight to render
+	m.openGroup("cat")
+	m = send(m, kp('v'))
+	if m.mode != ModeChart || m.chartStep != 1 || m.chartType != chartBar {
+		t.Fatalf("group v: mode=%v step=%d type=%d, want chart/1/bar", m.mode, m.chartStep, m.chartType)
+	}
+	if len(m.chartPicks) != 1 || m.chartPicks[0] != "cat" {
+		t.Errorf("chartPicks = %v, want [cat]", m.chartPicks)
+	}
+
+	// group → enter applies a real, clearable filter
+	m.mode = ModeList
+	m.openGroup("cat") // re-open (group rows still cat)
+	m.groupCursor = 0  // "books" (count 2, top)
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != ModeList {
+		t.Fatalf("after enter mode = %v", m.mode)
+	}
+	if m.filter != `cat="books"` {
+		t.Errorf("filter = %q, want cat=\"books\"", m.filter)
+	}
+	if m.result.Count() != 2 {
+		t.Errorf("filtered count = %d, want 2", m.result.Count())
+	}
+	// esc clears it
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.filter != "" || m.result.Count() != 3 {
+		t.Errorf("after esc: filter=%q count=%d, want \"\"/3", m.filter, m.result.Count())
+	}
+}

@@ -1299,18 +1299,11 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "a":
 		m.mode = ModeList
-	case "v": // chart these groups (count, or the active measure) as a bar
+	case "v": // chart this grouping as a bar — category pre-filled, choose the measure
 		m.chartType = chartBar
-		if col := m.groupMeasureCol(); col != "" && (m.groupSort == 2 || m.groupSort == 3) {
-			measure := "sum"
-			if m.groupSort == 3 {
-				measure = "avg"
-			}
-			m.chartPicks = []string{m.groupField, measure, col}
-		} else {
-			m.chartPicks = []string{m.groupField, "count"}
-		}
-		m.chartStep = 2
+		m.chartPicks = []string{m.groupField}
+		m.chartCursor = 0
+		m.chartStep = 1 // land on the Measure picker, then render
 		m.mode = ModeChart
 	case "m": // cycle measure column: none → each numeric column → none
 		nums := m.numericColumns()
@@ -1345,13 +1338,35 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.groupCursor < len(m.groupRows) {
 			gr := m.groupRows[m.groupCursor]
-			m.result = gr.res
+			// Record a real DSL filter so it shows in the filter input and esc
+			// clears it. Re-query it; if it can't reproduce the exact group
+			// (e.g. a numeric-looking string), keep the exact subset.
+			m.filter = m.groupField + "=" + groupFilterLiteral(gr.key)
+			if res, err := m.col.Query(m.filter); err == nil && res.Count() == gr.count {
+				m.result = res
+			} else {
+				m.result = gr.res
+			}
+			m.filterErr = nil
 			m.page, m.cursor = 1, 0
 			m.status = "filtered: " + m.groupField + "=" + gr.key
 			m.mode = ModeList
 		}
 	}
 	return m, nil
+}
+
+// groupFilterLiteral renders a group key as a DSL value: numbers/bools/null
+// pass through (typed); anything else is quoted as a string.
+func groupFilterLiteral(v string) string {
+	switch v {
+	case "true", "false", "null":
+		return v
+	}
+	if _, err := strconv.ParseFloat(v, 64); err == nil {
+		return v
+	}
+	return strconv.Quote(v)
 }
 
 // chartNextPrompt returns the next field-selection prompt given the picks made
