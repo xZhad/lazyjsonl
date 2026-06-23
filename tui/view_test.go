@@ -30,14 +30,13 @@ func TestViewFilterShowsError(t *testing.T) {
 	m.filter = "done="
 	m.applyFilter() // sets filterErr, stays ModeFilter
 	out := m.View().Content
-	if !strings.Contains(out, "filter:") {
-		t.Errorf("filter view missing prompt:\n%s", out)
+	// footer shows the in-progress filter text being edited
+	if !strings.Contains(out, "done=") {
+		t.Errorf("filter view missing the filter text:\n%s", out)
 	}
-	if !strings.Contains(strings.ToLower(out), "error") && m.filterErr != nil {
-		// the error text should be surfaced somehow
-		if !strings.Contains(out, m.filterErr.Error()) {
-			t.Errorf("filter error not shown:\n%s", out)
-		}
+	// and surfaces the parse error inline
+	if m.filterErr != nil && !strings.Contains(out, m.filterErr.Error()) {
+		t.Errorf("filter error not shown:\n%s", out)
 	}
 }
 
