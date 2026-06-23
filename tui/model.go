@@ -514,6 +514,15 @@ func (m *Model) openColumnPicker() {
 
 func (m *Model) buildPickList() {
 	m.pickList = nil
+	// When dived into a nested object, the picker lists that object's
+	// subfields (e.g. message.role, message.content) instead of the schema.
+	if len(m.drillCrumb) > 0 {
+		prefix := strings.Join(m.drillCrumb, ".")
+		for _, k := range m.unionSubkeys(prefix) {
+			m.pickList = append(m.pickList, pickRow{key: prefix + "." + k, depth: 0})
+		}
+		return
+	}
 	sample, _ := m.col.First()
 	for _, f := range m.schema {
 		m.pickList = append(m.pickList, pickRow{key: f.Key, depth: 0})
@@ -577,24 +586,18 @@ func (m *Model) applyColumnPick() {
 	}
 }
 
-// drillInto replaces the table columns with the nested subfields of the
-// focused object column (e.g. "message" → message.role, message.content, …).
-// Subkeys are unioned across the current page so varying records are covered.
-func (m *Model) drillInto() {
-	cols := m.activeColumns()
-	if m.colCursor >= len(cols) {
-		return
-	}
-	key := cols[m.colCursor]
+// unionSubkeys returns the sorted union of map keys found at keyPath
+// (a plain or dotted path) across the current page's rows.
+func (m *Model) unionSubkeys(keyPath string) []string {
 	seen := map[string]bool{}
 	var subkeys []string
 	for _, d := range m.pageRows() {
 		var val any
 		var ok bool
-		if strings.Contains(key, ".") {
-			val, ok = d.Path(key)
+		if strings.Contains(keyPath, ".") {
+			val, ok = d.Path(keyPath)
 		} else {
-			val, ok = d.Get(key)
+			val, ok = d.Get(keyPath)
 		}
 		if !ok {
 			continue
@@ -608,11 +611,24 @@ func (m *Model) drillInto() {
 			}
 		}
 	}
+	sort.Strings(subkeys)
+	return subkeys
+}
+
+// drillInto replaces the table columns with the nested subfields of the
+// focused object column (e.g. "message" → message.role, message.content, …).
+// Subkeys are unioned across the current page so varying records are covered.
+func (m *Model) drillInto() {
+	cols := m.activeColumns()
+	if m.colCursor >= len(cols) {
+		return
+	}
+	key := cols[m.colCursor]
+	subkeys := m.unionSubkeys(key)
 	if len(subkeys) == 0 {
 		m.status = "not a nested object"
 		return
 	}
-	sort.Strings(subkeys)
 	newCols := make([]string, len(subkeys))
 	for i, k := range subkeys {
 		newCols[i] = key + "." + k

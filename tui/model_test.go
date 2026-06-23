@@ -457,3 +457,35 @@ func TestDrillIntoColumn(t *testing.T) {
 		t.Errorf("after backspace columns = %v", m.columns)
 	}
 }
+
+func TestPickerInDrillListsSubfields(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(`{"id":"a","message":{"role":"user","content":"hi"}}
+{"id":"b","message":{"role":"assistant","content":"yo","model":"x"}}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m.showAllColumns = true
+	m.columns = []string{"id", "message"}
+	m.colCursor = 1
+	mi, _ := m.Update(key(' ')) // dive into message
+	m = mi.(*Model)
+	m.openColumnPicker()
+	if len(m.pickList) == 0 {
+		t.Fatal("empty pick list in drill")
+	}
+	for _, r := range m.pickList {
+		if !strings.HasPrefix(r.key, "message.") {
+			t.Errorf("pick row %q not under message.", r.key)
+		}
+	}
+	keys := map[string]bool{}
+	for _, r := range m.pickList {
+		keys[r.key] = true
+	}
+	for _, want := range []string{"message.role", "message.content", "message.model"} {
+		if !keys[want] {
+			t.Errorf("missing pick row %q (got %v)", want, m.pickList)
+		}
+	}
+}

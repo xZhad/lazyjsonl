@@ -127,8 +127,13 @@ func (m *Model) tablePane(w, h int, active bool) string {
 
 	// header (cell() truncates → no wrap; trailing space = column gap)
 	header := "  "
+	drillPrefix := strings.Join(m.drillCrumb, ".")
 	for i, c := range cols {
 		label := c
+		// While dived, drop the drill prefix from headers: message.api → .api
+		if drillPrefix != "" && strings.HasPrefix(c, drillPrefix+".") {
+			label = strings.TrimPrefix(c, drillPrefix)
+		}
 		if c == m.sortField {
 			if m.sortDesc {
 				label += " ▼"
@@ -296,11 +301,15 @@ func (m *Model) renderColumns(w, h int) string {
 		if i == m.pickCursor {
 			mark = styleGutter.Render("▌ ")
 		}
+		label := r.key
+		if dp := strings.Join(m.drillCrumb, "."); dp != "" && strings.HasPrefix(label, dp+".") {
+			label = strings.TrimPrefix(label, dp)
+		}
 		var name string
 		if r.depth > 0 {
-			name = "  " + styleMuted.Render("· ") + styleText.Render(r.key)
+			name = "  " + styleMuted.Render("· ") + styleText.Render(label)
 		} else {
-			name = styleHeader.Render(r.key)
+			name = styleHeader.Render(label)
 		}
 		b.WriteString(mark + box + " " + name + "\n")
 	}
