@@ -142,7 +142,11 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		}
 		header += st.Render(cell(label, colW) + " ")
 	}
-	lines := []string{paneTitle(active, "RECORDS"), header}
+	titleStr := "RECORDS"
+	if len(m.drillCrumb) > 0 {
+		titleStr += " · " + strings.Join(m.drillCrumb, " ▸ ")
+	}
+	lines := []string{paneTitle(active, titleStr), header}
 
 	for i, d := range m.pageRows() {
 		vals := rowCells(d, cols)
@@ -209,8 +213,11 @@ func (m *Model) renderFooter(w int) string {
 			return styleFooter.Width(w).Render(s)
 		}
 	}
-	left := " " + keyHint("j/k", "move") + keyHint("h/l", "page") + keyHint("/", "filter") +
-		keyHint("↵", "view") + keyHint("s", "sort") + keyHint("c", "cols") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
+	left := " " + keyHint("j/k", "move") + keyHint("/", "filter") + keyHint("↵", "view") +
+		keyHint("s", "sort") + keyHint("space", "dive") + keyHint("c", "cols") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
+	if len(m.drillCrumb) > 0 {
+		left = " " + keyHint("⌫", "back") + keyHint("space", "dive") + keyHint("s", "sort") + keyHint("/", "filter") + keyHint("c", "cols") + keyHint("?", "help") + keyHint("q", "quit")
+	}
 	right := ""
 	if m.status != "" {
 		st := styleOK
@@ -240,6 +247,8 @@ func (m *Model) renderHelp(w, h int) string {
 		{"s", "sort by column (toggles ▲/▼)"},
 		{"J / K", "next / previous file"},
 		{"tab", "switch focus (files ↔ table)"},
+		{"space", "dive into focused object column"},
+		{"backspace", "back out of a dive"},
 		{"enter", "open record detail"},
 		{"/", "filter (DSL, incl. nested: message.role=user)"},
 		{"esc", "clear filter"},

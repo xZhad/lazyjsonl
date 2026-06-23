@@ -64,6 +64,9 @@ type Model struct {
 	pickList   []pickRow
 	picked     map[string]bool
 	pickCursor int
+	// drill-into-object: stack of prior column sets + breadcrumb of dived keys
+	drillStack [][]string
+	drillCrumb []string
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -353,6 +356,10 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.filter = ""
 			m.applyFilter() // re-query all
 		}
+	case " ", "space":
+		m.drillInto() // dive into the focused object column → its subfields become columns
+	case "backspace":
+		m.popDrill() // back out one level
 	case "c":
 		m.openColumnPicker()
 		return m, nil
@@ -568,6 +575,64 @@ func (m *Model) applyColumnPick() {
 	if m.colCursor >= len(cols) {
 		m.colCursor = 0
 	}
+}
+
+// drillInto replaces the table columns with the nested subfields of the
+// focused object column (e.g. "message" → message.role, message.content, …).
+// Subkeys are unioned across the current page so varying records are covered.
+func (m *Model) drillInto() {
+	cols := m.activeColumns()
+	if m.colCursor >= len(cols) {
+		return
+	}
+	key := cols[m.colCursor]
+	seen := map[string]bool{}
+	var subkeys []string
+	for _, d := range m.pageRows() {
+		var val any
+		var ok bool
+		if strings.Contains(key, ".") {
+			val, ok = d.Path(key)
+		} else {
+			val, ok = d.Get(key)
+		}
+		if !ok {
+			continue
+		}
+		if obj, isMap := val.(map[string]any); isMap {
+			for k := range obj {
+				if !seen[k] {
+					seen[k] = true
+					subkeys = append(subkeys, k)
+				}
+			}
+		}
+	}
+	if len(subkeys) == 0 {
+		m.status = "not a nested object"
+		return
+	}
+	sort.Strings(subkeys)
+	newCols := make([]string, len(subkeys))
+	for i, k := range subkeys {
+		newCols[i] = key + "." + k
+	}
+	m.drillStack = append(m.drillStack, m.columns)
+	m.drillCrumb = append(m.drillCrumb, key)
+	m.columns = newCols
+	m.showAllColumns = true
+	m.colCursor = 0
+}
+
+// popDrill backs out one drill level, restoring the previous columns.
+func (m *Model) popDrill() {
+	if len(m.drillStack) == 0 {
+		return
+	}
+	m.columns = m.drillStack[len(m.drillStack)-1]
+	m.drillStack = m.drillStack[:len(m.drillStack)-1]
+	m.drillCrumb = m.drillCrumb[:len(m.drillCrumb)-1]
+	m.colCursor = 0
 }
 
 func (m *Model) Close() error { return m.col.Close() }

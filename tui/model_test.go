@@ -431,3 +431,29 @@ func TestDetailAndReload(t *testing.T) {
 		t.Errorf("count after reload = %d, want 3", m.result.Count())
 	}
 }
+
+func TestDrillIntoColumn(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(`{"id":"a","message":{"role":"user","content":"hi"}}
+{"id":"b","message":{"role":"assistant","content":"yo"}}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m.showAllColumns = true
+	m.columns = []string{"id", "message"}
+	m.colCursor = 1 // focus the message (object) column
+	mi, _ := m.Update(key(' '))
+	m = mi.(*Model)
+	got := strings.Join(m.columns, ",")
+	if !strings.Contains(got, "message.role") || !strings.Contains(got, "message.content") {
+		t.Fatalf("dive columns = %v", m.columns)
+	}
+	if len(m.drillCrumb) != 1 || m.drillCrumb[0] != "message" {
+		t.Errorf("crumb = %v", m.drillCrumb)
+	}
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m = mi.(*Model)
+	if strings.Join(m.columns, ",") != "id,message" {
+		t.Errorf("after backspace columns = %v", m.columns)
+	}
+}
