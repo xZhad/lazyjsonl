@@ -65,7 +65,7 @@ func (m *Model) currentLabel() string {
 }
 
 func (m *Model) renderTitle(w int) string {
-	left := styleApp.Render(" lazyjsonl ") + stylePath.Render("· "+m.currentLabel())
+	left := " " + gradientText("lazyjsonl", m.frame) + " " + stylePath.Render("· "+m.currentLabel())
 	right := styleCount.Render(fmt.Sprintf("%d records ", m.result.Count()))
 	return bar(w, left, right)
 }
@@ -86,6 +86,10 @@ func (m *Model) renderBody(w, h int) string {
 func (m *Model) filesPane(w, h int, active bool) string {
 	inner := w - 2
 	innerH := h - 2
+	contentW := inner - 1 // rightmost column reserved for the scrollbar
+	if contentW < 2 {
+		contentW = 2
+	}
 	listH := innerH - 1
 	if listH < 1 {
 		listH = 1
@@ -94,15 +98,28 @@ func (m *Model) filesPane(w, h int, active bool) string {
 	if m.fileIdx >= listH {
 		start = m.fileIdx - listH + 1
 	}
-	lines := []string{paneTitle(active, "FILES")}
-	for i := start; i < len(m.files) && i < start+listH; i++ {
-		name := filepath.Base(m.files[i])
-		if i == m.fileIdx {
-			row := styleSelGut.Render("▌ ") + styleSel.Render(cell(name, inner-2))
-			lines = append(lines, styleSel.Width(inner).Render(row))
-		} else {
-			lines = append(lines, styleMuted.Render("  "+cell(name, inner-2)))
+	sb := scrollbar(listH, len(m.files), listH, start)
+	lines := []string{padTo(paneTitle(active, "FILES"), contentW) + " "}
+	for j := 0; j < listH; j++ {
+		i := start + j
+		var content string
+		switch {
+		case i < len(m.files):
+			name := filepath.Base(m.files[i])
+			if i == m.fileIdx {
+				row := styleSelGut.Render("▌ ") + styleSel.Render(cell(name, contentW-2))
+				content = styleSel.Width(contentW).Render(row)
+			} else {
+				content = padTo(styleMuted.Render("  "+cell(name, contentW-2)), contentW)
+			}
+		default:
+			content = padTo("", contentW)
 		}
+		sc := " "
+		if j < len(sb) {
+			sc = sb[j]
+		}
+		lines = append(lines, content+sc)
 	}
 	// lipgloss .Width/.Height are TOTAL (border included) → pass full w/h
 	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
@@ -110,10 +127,19 @@ func (m *Model) filesPane(w, h int, active bool) string {
 
 func (m *Model) tablePane(w, h int, active bool) string {
 	inner := w - 2
+	innerH := h - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+	contentW := inner - 1 // rightmost column reserved for the scrollbar
+	if contentW < 2 {
+		contentW = 2
+	}
+
 	cols := m.activeColumns()
 	colW := 16
 	if n := len(cols); n > 0 {
-		colW = (inner-2)/n - 1
+		colW = (contentW-2)/n - 1
 		if colW < 10 {
 			colW = 10
 		}
@@ -121,7 +147,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 			colW = 22
 		}
 	}
-	if maxCols := (inner - 2) / (colW + 1); maxCols >= 1 && maxCols < len(cols) {
+	if maxCols := (contentW - 2) / (colW + 1); maxCols >= 1 && maxCols < len(cols) {
 		cols = cols[:maxCols]
 	}
 
@@ -151,23 +177,43 @@ func (m *Model) tablePane(w, h int, active bool) string {
 	if len(m.drillCrumb) > 0 {
 		titleStr += " · " + strings.Join(m.drillCrumb, " ▸ ")
 	}
-	lines := []string{paneTitle(active, titleStr), header}
 
-	for i, d := range m.pageRows() {
-		vals := rowCells(d, cols)
-		if i == m.cursor {
-			row := styleSelGut.Render("▌ ")
-			for _, v := range vals {
-				row += styleSel.Render(cell(v, colW) + " ")
+	rows := m.pageRows()
+	regionH := innerH - 2 // lines below title + header
+	if regionH < 0 {
+		regionH = 0
+	}
+	sb := scrollbar(regionH, m.result.Count(), m.pageSize, (m.page-1)*m.pageSize)
+
+	lines := make([]string, 0, innerH)
+	lines = append(lines, padTo(paneTitle(active, titleStr), contentW)+" ")
+	lines = append(lines, padTo(header, contentW)+" ")
+	for j := 0; j < regionH; j++ {
+		var content string
+		switch {
+		case j < len(rows):
+			vals := rowCells(rows[j], cols)
+			if j == m.cursor {
+				row := styleSelGut.Render("▌ ")
+				for _, v := range vals {
+					row += styleSel.Render(cell(v, colW) + " ")
+				}
+				content = styleSel.Width(contentW).Render(row)
+			} else {
+				row := "  "
+				for _, v := range vals {
+					row += styleText.Render(cell(v, colW) + " ")
+				}
+				content = padTo(row, contentW)
 			}
-			lines = append(lines, styleSel.Width(inner).Render(row))
-		} else {
-			row := "  "
-			for _, v := range vals {
-				row += styleText.Render(cell(v, colW) + " ")
-			}
-			lines = append(lines, row)
+		default:
+			content = padTo("", contentW)
 		}
+		sc := " "
+		if j < len(sb) {
+			sc = sb[j]
+		}
+		lines = append(lines, content+sc)
 	}
 	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
 }
@@ -235,11 +281,65 @@ func (m *Model) renderFooter(w int) string {
 	return bar(w, left, right)
 }
 
+// detailBody splits the pretty-printed record into display lines.
+func (m *Model) detailBody() []string {
+	return strings.Split(prettyJSON(m.detail.Raw()), "\n")
+}
+
+// detailViewH is the number of JSON lines visible at once: box height
+// (h-1) minus its border (2) minus the RECORD title line (1).
+func (m *Model) detailViewH() int {
+	vh := m.height - 4
+	if vh < 1 {
+		vh = 1
+	}
+	return vh
+}
+
+func (m *Model) detailMaxScroll() int {
+	if mx := len(m.detailBody()) - m.detailViewH(); mx > 0 {
+		return mx
+	}
+	return 0
+}
+
 func (m *Model) renderDetail(w, h int) string {
+	allLines := m.detailBody()
+	viewH := m.detailViewH()
+	inner := w - 2
+	contentW := inner - 1
+	if contentW < 2 {
+		contentW = 2
+	}
+	start := m.detailScroll
+	if mx := m.detailMaxScroll(); start > mx {
+		start = mx
+	}
+	sb := scrollbar(viewH, len(allLines), viewH, start)
 	title := paneTitle(true, "RECORD")
-	body := styleText.Render(prettyJSON(m.detail.Raw()))
-	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
-	footer := styleFooter.Width(w).Render(" " + keyHint("esc", "back") + keyHint("q", "quit"))
+	if mx := m.detailMaxScroll(); mx > 0 {
+		title += styleScrollHint.Render(fmt.Sprintf("   line %d–%d / %d",
+			start+1, min(start+viewH, len(allLines)), len(allLines)))
+	}
+	lines := []string{padTo(title, contentW) + " "}
+	for j := 0; j < viewH; j++ {
+		i := start + j
+		var content string
+		if i < len(allLines) {
+			content = padTo(styleText.Render(cell(allLines[i], contentW)), contentW)
+		} else {
+			content = padTo("", contentW)
+		}
+		sc := " "
+		if j < len(sb) {
+			sc = sb[j]
+		}
+		lines = append(lines, content+sc)
+	}
+	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(strings.Join(lines, "\n"))
+	hint := " " + keyHint("j/k", "scroll") + keyHint("g/G", "top/end") +
+		keyHint("esc", "back") + keyHint("q", "quit")
+	footer := styleFooter.Width(w).Render(hint)
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
 }
 
@@ -254,7 +354,7 @@ func (m *Model) renderHelp(w, h int) string {
 		{"tab", "switch focus (files ↔ table)"},
 		{"space", "dive into focused object column"},
 		{"backspace", "back out of a dive"},
-		{"enter", "open record detail"},
+		{"enter", "open record detail (j/k scrolls it)"},
 		{"/", "filter (DSL, incl. nested: message.role=user)"},
 		{"esc", "clear filter"},
 		{"c", "choose columns (incl. nested fields)"},

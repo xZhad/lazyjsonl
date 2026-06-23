@@ -38,6 +38,9 @@ var (
 	styleCursor   = lipgloss.NewStyle().Background(cMagenta).Foreground(cBg) // block cursor
 	styleOverlay  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cViolet).
 			Background(cBg).Padding(1, 3)
+	styleScrollThumb = lipgloss.NewStyle().Foreground(cViolet).Bold(true)
+	styleScrollTrack = lipgloss.NewStyle().Foreground(cIdle)
+	styleScrollHint  = lipgloss.NewStyle().Foreground(cMuted)
 )
 
 // pane returns a box style, violet-bordered when focused, dim-purple when idle.

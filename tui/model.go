@@ -67,6 +67,9 @@ type Model struct {
 	// drill-into-object: stack of prior column sets + breadcrumb of dived keys
 	drillStack [][]string
 	drillCrumb []string
+	// presentation
+	frame        int // animation frame for the title shimmer
+	detailScroll int // top line offset in the detail view
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -223,7 +226,7 @@ func (m *Model) exportCurrentView() error {
 	return os.Rename(tmpName, dest)
 }
 
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tea.Cmd { return tick() }
 
 func (m *Model) pageCount() int {
 	n := m.result.Count()
@@ -239,6 +242,9 @@ func (m *Model) pageRows() []jsonldb.Doc {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tickMsg:
+		m.frame++
+		return m, tick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// rows that fit the table pane: height − title − footer − border − pane-title − header
@@ -262,8 +268,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ModeList:
 			return m.updateList(msg)
 		case ModeDetail:
-			m.mode = ModeList
-			return m, nil
+			return m.updateDetail(msg)
 		case ModeFilter:
 			return m.updateFilter(msg)
 		case ModeConfirm:
@@ -412,6 +417,7 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if d, ok := m.selectedDoc(); ok {
 			m.detail = d
+			m.detailScroll = 0
 			m.mode = ModeDetail
 		}
 	case "r":
@@ -420,6 +426,39 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.refresh()
 		}
+	}
+	return m, nil
+}
+
+// detailLineCount / detailViewHeight back the detail scroll math; defined in
+// view.go's renderDetail. updateDetail scrolls the pretty-printed JSON.
+func (m *Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	max := m.detailMaxScroll()
+	switch msg.String() {
+	case "esc", "q", "enter", "ctrl+c":
+		m.mode = ModeList
+	case "j", "down":
+		if m.detailScroll < max {
+			m.detailScroll++
+		}
+	case "k", "up":
+		if m.detailScroll > 0 {
+			m.detailScroll--
+		}
+	case "ctrl+d", "pgdown", " ", "space":
+		m.detailScroll += 10
+		if m.detailScroll > max {
+			m.detailScroll = max
+		}
+	case "ctrl+u", "pgup":
+		m.detailScroll -= 10
+		if m.detailScroll < 0 {
+			m.detailScroll = 0
+		}
+	case "g":
+		m.detailScroll = 0
+	case "G":
+		m.detailScroll = max
 	}
 	return m, nil
 }
