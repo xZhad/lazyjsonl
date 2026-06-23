@@ -832,3 +832,41 @@ func TestChartTypesScatterTimeSeries(t *testing.T) {
 		t.Error("scatter ready after X,Y")
 	}
 }
+
+func TestGroupMeasure(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"p":"a","n":10}
+{"p":"a","n":20}
+{"p":"b","n":30}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 90, Height: 18})
+	m.focus = FocusTable
+	m.openGroup("p")
+	if m.groupMeasIdx != -1 {
+		t.Fatalf("measure idx = %d, want -1 (none)", m.groupMeasIdx)
+	}
+	// m → measure = n (first numeric)
+	m = send(m, kp('m'))
+	if m.groupMeasureCol() != "n" {
+		t.Fatalf("measure col = %q, want n", m.groupMeasureCol())
+	}
+	// group "a": sum 30, avg 15
+	var a groupRow
+	for _, r := range m.groupRows {
+		if r.key == "a" {
+			a = r
+		}
+	}
+	if a.sum != 30 || a.avg != 15 {
+		t.Errorf("group a: sum=%v avg=%v, want 30/15", a.sum, a.avg)
+	}
+	// s → key sort; first row key "a"
+	m.groupSort = 0
+	m = send(m, kp('s')) // → key↑
+	if m.groupRows[0].key != "a" {
+		t.Errorf("after key sort, first = %q, want a", m.groupRows[0].key)
+	}
+}

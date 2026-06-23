@@ -445,21 +445,36 @@ func (m *Model) renderStats(w, h int) string {
 }
 
 func (m *Model) renderGroup(w, h int) string {
+	col := m.groupMeasureCol()
+	sortNames := []string{"count↓", "key↑", "sum↓", "avg↓"}
 	var b strings.Builder
-	b.WriteString(styleApp.Render("Group by ") + styleHeader.Render(m.groupField) +
-		styleMuted.Render(fmt.Sprintf("   %d groups · ↵ filter · v chart · esc close", len(m.groupRows))) + "\n")
-	b.WriteString(gradientRule(54) + "\n")
-	listH := h - 10
-	if listH < 4 {
-		listH = 4
+	info := fmt.Sprintf("   %d groups · sort %s · s sort · m measure", len(m.groupRows), sortNames[m.groupSort])
+	if col != "" {
+		info += " (" + col + ")"
+	}
+	info += " · ↵ filter · v chart · esc"
+	b.WriteString(styleApp.Render("Group by ") + styleHeader.Render(m.groupField) + styleMuted.Render(info) + "\n")
+	b.WriteString(gradientRule(66) + "\n")
+
+	hdr := "  " + styleHeader.Render(cell("value", 22)) + " " + styleHeader.Render(cell("count", 7))
+	if col != "" {
+		hdr += " " + styleHeader.Render(cell("sum", 11)) + " " + styleHeader.Render(cell("avg", 11))
+	}
+	b.WriteString(hdr + "\n")
+
+	listH := h - 12
+	if listH < 3 {
+		listH = 3
 	}
 	start := 0
 	if m.groupCursor >= listH {
 		start = m.groupCursor - listH + 1
 	}
 	maxCount := 1
-	if len(m.groupRows) > 0 {
-		maxCount = m.groupRows[0].count
+	for _, r := range m.groupRows {
+		if r.count > maxCount {
+			maxCount = r.count
+		}
 	}
 	for i := start; i < len(m.groupRows) && i < start+listH; i++ {
 		gr := m.groupRows[i]
@@ -469,12 +484,17 @@ func (m *Model) renderGroup(w, h int) string {
 			mark = styleGutter.Render("▌ ")
 			key = styleSel.Render(cell(gr.key, 22))
 		}
-		barW := gr.count * 18 / maxCount
-		if barW < 1 && gr.count > 0 {
-			barW = 1
+		line := mark + key + " " + styleNum.Render(cell(fmt.Sprintf("%d", gr.count), 7))
+		if col != "" {
+			line += " " + styleNum.Render(cell(fmtNum(gr.sum), 11)) + " " + styleNum.Render(cell(fmt.Sprintf("%.2f", gr.avg), 11))
+		} else {
+			barW := gr.count * 16 / maxCount
+			if barW < 1 && gr.count > 0 {
+				barW = 1
+			}
+			line += " " + styleScrollThumb.Render(strings.Repeat("█", barW))
 		}
-		bar := styleScrollThumb.Render(strings.Repeat("█", barW))
-		b.WriteString(mark + key + " " + styleNum.Render(fmt.Sprintf("%6d", gr.count)) + " " + bar + "\n")
+		b.WriteString(line + "\n")
 	}
 	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)

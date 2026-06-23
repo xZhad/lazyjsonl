@@ -106,10 +106,12 @@ type Model struct {
 	detailInput textinput.Model
 	detailQuery string
 	// aggregate
-	stats       statsData
-	groupField  string
-	groupRows   []groupRow
-	groupCursor int
+	stats        statsData
+	groupField   string
+	groupRows    []groupRow
+	groupCursor  int
+	groupSort    int // 0 count↓ · 1 key↑ · 2 sum↓ · 3 avg↓
+	groupMeasIdx int // -1 none, else index into numericColumns()
 	// charts
 	chartStep   int      // 0 pick type · 1 picking fields · 2 render
 	chartType   int      // index into chartTypes
@@ -126,9 +128,10 @@ type statsData struct {
 
 // groupRow is one distinct value of a grouped column with its record subset.
 type groupRow struct {
-	key   string
-	count int
-	res   *jsonldb.Result
+	key      string
+	count    int
+	res      *jsonldb.Result
+	sum, avg float64 // of the active measure column (0 if none)
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -1228,37 +1231,104 @@ func (m *Model) openStats(field string) {
 	m.mode = ModeStats
 }
 
-// openGroup groups the current result by field (distinct value → subset),
-// sorted by count desc, and opens the group view.
+// openGroup groups the current result by field (distinct value → subset) and
+// opens the group view, counts only, sorted by count desc.
 func (m *Model) openGroup(field string) {
 	groups := m.result.GroupBy(field)
 	rows := make([]groupRow, 0, len(groups))
 	for k, res := range groups {
 		rows = append(rows, groupRow{key: k, count: res.Count(), res: res})
 	}
-	sort.Slice(rows, func(a, b int) bool {
-		if rows[a].count != rows[b].count {
-			return rows[a].count > rows[b].count
-		}
-		return rows[a].key < rows[b].key
-	})
 	m.groupField = field
 	m.groupRows = rows
 	m.groupCursor = 0
+	m.groupSort = 0
+	m.groupMeasIdx = -1
+	m.sortGroups()
 	m.mode = ModeGroup
 }
 
+// groupMeasureCol returns the active numeric measure column, or "" for none.
+func (m *Model) groupMeasureCol() string {
+	nums := m.numericColumns()
+	if m.groupMeasIdx < 0 || m.groupMeasIdx >= len(nums) {
+		return ""
+	}
+	return nums[m.groupMeasIdx]
+}
+
+// recomputeGroupMeasure fills each row's sum/avg for the active measure column.
+func (m *Model) recomputeGroupMeasure() {
+	col := m.groupMeasureCol()
+	for i := range m.groupRows {
+		if col == "" {
+			m.groupRows[i].sum, m.groupRows[i].avg = 0, 0
+			continue
+		}
+		m.groupRows[i].sum, _ = m.groupRows[i].res.Sum(col)
+		m.groupRows[i].avg, _ = m.groupRows[i].res.Avg(col)
+	}
+}
+
+func (m *Model) sortGroups() {
+	r := m.groupRows
+	sort.SliceStable(r, func(a, b int) bool {
+		switch m.groupSort {
+		case 1: // key asc
+			return r[a].key < r[b].key
+		case 2: // sum desc
+			if r[a].sum != r[b].sum {
+				return r[a].sum > r[b].sum
+			}
+		case 3: // avg desc
+			if r[a].avg != r[b].avg {
+				return r[a].avg > r[b].avg
+			}
+		}
+		if r[a].count != r[b].count { // default + tiebreak: count desc
+			return r[a].count > r[b].count
+		}
+		return r[a].key < r[b].key
+	})
+}
+
 // updateGroup navigates the group list; enter filters the table to the
-// selected value's subset; esc/q closes.
+// selected value's subset; m cycles the measure column; s cycles sort.
 func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "a":
 		m.mode = ModeList
-	case "v": // chart these group counts directly
+	case "v": // chart these groups (count, or the active measure) as a bar
 		m.chartType = chartBar
-		m.chartPicks = []string{m.groupField, "count"}
+		if col := m.groupMeasureCol(); col != "" && (m.groupSort == 2 || m.groupSort == 3) {
+			measure := "sum"
+			if m.groupSort == 3 {
+				measure = "avg"
+			}
+			m.chartPicks = []string{m.groupField, measure, col}
+		} else {
+			m.chartPicks = []string{m.groupField, "count"}
+		}
 		m.chartStep = 2
 		m.mode = ModeChart
+	case "m": // cycle measure column: none → each numeric column → none
+		nums := m.numericColumns()
+		m.groupMeasIdx++
+		if m.groupMeasIdx >= len(nums) {
+			m.groupMeasIdx = -1
+		}
+		m.recomputeGroupMeasure()
+		m.sortGroups()
+	case "s": // cycle sort: count → key → sum → avg (sum/avg only with a measure)
+		m.groupSort++
+		max := 2
+		if m.groupMeasureCol() != "" {
+			max = 4
+		}
+		if m.groupSort >= max {
+			m.groupSort = 0
+		}
+		m.sortGroups()
 	case "j", "down":
 		if m.groupCursor < len(m.groupRows)-1 {
 			m.groupCursor++
