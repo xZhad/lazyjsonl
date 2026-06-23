@@ -679,6 +679,10 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.colCursor < len(cols) {
 			m.openGroup(cols[m.colCursor])
 		}
+	case "f": // filter to the focused cell's value
+		m.filterFromCell(false)
+	case "F": // exclude the focused cell's value
+		m.filterFromCell(true)
 	case "v":
 		m.chartStep = 0
 		m.chartCursor = 0
@@ -1364,6 +1368,53 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// filterFromCell ANDs a clause for the focused cell onto the current filter
+// (op "=" to keep, "!=" to exclude) and re-queries.
+func (m *Model) filterFromCell(exclude bool) {
+	d, ok := m.selectedDoc()
+	if !ok {
+		return
+	}
+	cols := m.activeColumns()
+	if m.colCursor >= len(cols) {
+		return
+	}
+	field := cols[m.colCursor]
+	raw, ok := docRaw(d, field)
+	if !ok {
+		m.status = "no value to filter"
+		return
+	}
+	lit, ok := dslLiteral(raw)
+	if !ok {
+		m.status = "can't filter on a nested object"
+		return
+	}
+	op := "="
+	if exclude {
+		op = "!="
+	}
+	clause := field + op + lit
+	combined := clause
+	if m.filter != "" {
+		prev := m.filter
+		if strings.Contains(prev, "|=") {
+			prev = "(" + prev + ")"
+		}
+		combined = prev + " " + clause
+	}
+	res, err := m.col.Query(combined)
+	if err != nil {
+		m.status = "filter failed"
+		return
+	}
+	m.filter = combined
+	m.result = res
+	m.filterErr = nil
+	m.page, m.cursor = 1, 0
+	m.status = "filtered: " + clause
 }
 
 // groupFilterLiteral renders a group key as a DSL value: numbers/bools/null

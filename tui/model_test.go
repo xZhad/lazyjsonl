@@ -984,3 +984,30 @@ func TestStackedGroupFilters(t *testing.T) {
 		t.Errorf("after esc: filter=%q count=%d, want \"\"/4", m.filter, m.result.Count())
 	}
 }
+
+func TestFilterFromCell(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"cat":"a","n":1}
+{"cat":"b","n":2}
+{"cat":"a","n":3}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 18})
+	m.focus = FocusTable
+	// columns sorted: cat, n → colCursor 0 = cat; cursor 0 = first row (cat=a)
+	m.colCursor = 0
+	m.cursor = 0
+	m = send(m, kp('f')) // filter to cat="a"
+	if m.filter != `cat="a"` || m.result.Count() != 2 {
+		t.Fatalf("f: filter=%q count=%d, want cat=\"a\"/2", m.filter, m.result.Count())
+	}
+	// clear, then exclude
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	m.cursor = 0
+	m = send(m, kp('F')) // exclude cat="a"
+	if m.filter != `cat!="a"` || m.result.Count() != 1 {
+		t.Errorf("F: filter=%q count=%d, want cat!=\"a\"/1", m.filter, m.result.Count())
+	}
+}

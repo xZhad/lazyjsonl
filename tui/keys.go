@@ -21,6 +21,7 @@ type keyMap struct {
 	Enter    key.Binding
 	Jump     key.Binding
 	Filter   key.Binding
+	CellFilt key.Binding
 	Search   key.Binding
 	Esc      key.Binding
 	Cols     key.Binding
@@ -50,6 +51,7 @@ var keys = keyMap{
 	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "view")),
 	Jump:     key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "jump to #")),
 	Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+	CellFilt: key.NewBinding(key.WithKeys("f", "F"), key.WithHelp("f/F", "filter to/≠ cell")),
 	Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 	Esc:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear")),
 	Cols:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "columns")),
@@ -78,7 +80,7 @@ func (m *Model) shortKeys() []key.Binding {
 func fullGroups() [][]key.Binding {
 	return [][]key.Binding{
 		{keys.Move, keys.Column, keys.Page, keys.Ends, keys.File, keys.Tab, keys.Jump},
-		{keys.Enter, keys.Sort, keys.Stats, keys.Group, keys.Chart, keys.Dive, keys.Back, keys.Cols, keys.Filter, keys.Esc},
+		{keys.Enter, keys.Sort, keys.Stats, keys.Group, keys.Chart, keys.Dive, keys.Back, keys.Cols, keys.Filter, keys.CellFilt, keys.Esc},
 		{keys.Yank, keys.YankCell, keys.Delete, keys.Export, keys.Reload, keys.Mouse, keys.Help, keys.Quit},
 	}
 }

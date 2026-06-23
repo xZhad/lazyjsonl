@@ -22,34 +22,31 @@ import (
 	"github.com/NimbleMarkets/ntcharts/v2/linechart/timeserieslinechart"
 	"github.com/NimbleMarkets/ntcharts/v2/linechart/wavelinechart"
 	"github.com/NimbleMarkets/ntcharts/v2/sparkline"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/xZhad/jsonldb"
 )
 
-// cell pads or truncates s to exactly w runes (used for plain measuring only).
+// cell pads or truncates s to exactly w display cells (wide-char aware, so CJK
+// and emoji don't misalign the grid).
 func cell(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) > w {
-		if w == 1 {
-			return "…"
-		}
-		return string(r[:w-1]) + "…"
+	if ansi.StringWidth(s) > w {
+		s = ansi.Truncate(s, w, "…")
 	}
-	return s + strings.Repeat(" ", w-len(r))
+	if pad := w - ansi.StringWidth(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
 }
 
-// clip truncates s to at most n runes with an ellipsis (no padding).
+// clip truncates s to at most n display cells with an ellipsis (no padding).
 func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
+	if ansi.StringWidth(s) <= n {
 		return s
 	}
-	if n <= 1 {
-		return "…"
-	}
-	return string(r[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
 func (m *Model) View() tea.View {
@@ -901,6 +898,38 @@ func (m *Model) buildHeatmap(w, h int) string {
 		sb.WriteString("\n")
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// docRaw returns a column's raw value (plain or dotted path).
+func docRaw(d jsonldb.Doc, field string) (any, bool) {
+	if strings.Contains(field, ".") {
+		return d.Path(field)
+	}
+	return d.Get(field)
+}
+
+// dslLiteral renders a value as a DSL literal (typed for numbers/bools/null,
+// quoted for strings). ok=false for containers, which can't be filtered.
+func dslLiteral(v any) (string, bool) {
+	switch x := v.(type) {
+	case bool:
+		if x {
+			return "true", true
+		}
+		return "false", true
+	case json.Number:
+		return x.String(), true
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64), true
+	case string:
+		return strconv.Quote(x), true
+	case nil:
+		return "null", true
+	case map[string]any, []any:
+		return "", false
+	default:
+		return strconv.Quote(fmt.Sprintf("%v", x)), true
+	}
 }
 
 func scalarStr(v any) string {
