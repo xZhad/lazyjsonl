@@ -431,6 +431,24 @@ func fmtNum(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
+// sparkBar renders integer counts as a row of block glyphs (a mini histogram).
+func sparkBar(counts []int) string {
+	blocks := []rune(" ▁▂▃▄▅▆▇█")
+	maxC := 1
+	for _, c := range counts {
+		if c > maxC {
+			maxC = c
+		}
+	}
+	ramp := lipgloss.Blend1D(len(counts), cViolet, cMagenta, cCyan)
+	var b strings.Builder
+	for i, c := range counts {
+		idx := c * (len(blocks) - 1) / maxC
+		b.WriteString(lipgloss.NewStyle().Foreground(ramp[i]).Render(string(blocks[idx])))
+	}
+	return b.String()
+}
+
 func (m *Model) renderStats(w, h int) string {
 	s := m.stats
 	var b strings.Builder
@@ -438,14 +456,17 @@ func (m *Model) renderStats(w, h int) string {
 	b.WriteString(gradientRule(34) + "\n")
 	rows := [][2]string{
 		{"count", fmt.Sprintf("%d", s.count)},
-		{"min", fmtNum(s.min)},
-		{"max", fmtNum(s.max)},
-		{"sum", fmtNum(s.sum)},
-		{"mean", fmtNum(s.mean)},
-		{"median", fmtNum(s.median)},
+		{"min", thousands(s.min)},
+		{"max", thousands(s.max)},
+		{"sum", thousands(s.sum)},
+		{"mean", thousands(s.mean)},
+		{"median", thousands(s.median)},
 	}
 	for _, kv := range rows {
 		b.WriteString(styleKey.Render(cell(kv[0], 9)) + styleNum.Render(kv[1]) + "\n")
+	}
+	if len(s.hist) > 0 {
+		b.WriteString("\n" + styleMuted.Render("distribution") + "\n" + sparkBar(s.hist) + "\n")
 	}
 	b.WriteString("\n" + styleMuted.Render("any key to close"))
 	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
@@ -602,6 +623,8 @@ func (m *Model) renderChart(w, h int) string {
 		body = m.buildTimeSeries(chartW, chartH)
 	case chartHeatmap:
 		body = m.buildHeatmap(chartW, chartH)
+	case chartCalendar:
+		body = m.buildCalendar(chartW, chartH)
 	}
 	title := paneTitle(true, "CHART · "+chartTypes[m.chartType]+" · "+strings.Join(m.chartPicks, " / "))
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
@@ -1081,6 +1104,62 @@ func dslLiteral(v any) (string, bool) {
 	default:
 		return strconv.Quote(fmt.Sprintf("%v", x)), true
 	}
+}
+
+// buildCalendar renders a GitHub-style contribution grid: counts per day for a
+// date column, laid out as weekday rows × week columns, shaded by intensity.
+func (m *Model) buildCalendar(w, h int) string {
+	col := m.chartPicks[0]
+	counts := map[string]int{}
+	var minD, maxD time.Time
+	for _, d := range m.result.Docs() {
+		t, ok := docTime(d, col)
+		if !ok {
+			continue
+		}
+		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		counts[day.Format("2006-01-02")]++
+		if minD.IsZero() || day.Before(minD) {
+			minD = day
+		}
+		if day.After(maxD) {
+			maxD = day
+		}
+	}
+	if minD.IsZero() {
+		return styleMuted.Render("no dates in ‘" + col + "’")
+	}
+	start := minD.AddDate(0, 0, -int(minD.Weekday())) // back to Sunday
+	weeks := int(maxD.Sub(start).Hours()/24)/7 + 1
+	if maxWeeks := (w - 5) / 2; maxWeeks >= 1 && weeks > maxWeeks {
+		start = start.AddDate(0, 0, (weeks-maxWeeks)*7) // keep the most recent weeks
+		weeks = maxWeeks
+	}
+	maxC := 1
+	for _, c := range counts {
+		if c > maxC {
+			maxC = c
+		}
+	}
+	ramp := lipgloss.Blend1D(8, cBg, cIdle, cViolet, cMagenta)
+	labels := []string{"   ", "Mon", "   ", "Wed", "   ", "Fri", "   "}
+	var b strings.Builder
+	for wd := 0; wd < 7; wd++ {
+		b.WriteString(styleMuted.Render(labels[wd]) + " ")
+		for wk := 0; wk < weeks; wk++ {
+			day := start.AddDate(0, 0, wk*7+wd)
+			if day.After(maxD) || day.Before(minD) {
+				b.WriteString("  ")
+				continue
+			}
+			n := counts[day.Format("2006-01-02")]
+			b.WriteString(lipgloss.NewStyle().Foreground(ramp[n*(len(ramp)-1)/maxC]).Render("██"))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("%s → %s · max %d/day",
+		minD.Format("2006-01-02"), maxD.Format("2006-01-02"), maxC)))
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func scalarStr(v any) string {

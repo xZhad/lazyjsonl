@@ -40,10 +40,11 @@ const (
 	chartSparkline
 	chartTimeSeries
 	chartHeatmap
+	chartCalendar
 )
 
 // chartTypes are the offered chart kinds, in picker order (index = const above).
-var chartTypes = []string{"bar", "line", "scatter", "sparkline", "time series", "heatmap (cross-tab)"}
+var chartTypes = []string{"bar", "line", "scatter", "sparkline", "time series", "heatmap (cross-tab)", "calendar (by day)"}
 
 // pickRow is one candidate column in the column picker (top-level or nested).
 type pickRow struct {
@@ -126,6 +127,7 @@ type statsData struct {
 	field                       string
 	count                       int
 	min, max, sum, mean, median float64
+	hist                        []int // value distribution buckets
 }
 
 // groupRow is one distinct value of a grouped column with its record subset.
@@ -1233,6 +1235,19 @@ func (m *Model) openStats(field string) {
 	if n%2 == 0 {
 		median = (vals[n/2-1] + vals[n/2]) / 2
 	}
+	const nb = 24
+	hist := make([]int, nb)
+	span := vals[n-1] - vals[0]
+	if span <= 0 {
+		span = 1
+	}
+	for _, v := range vals {
+		b := int((v - vals[0]) / span * float64(nb))
+		if b >= nb {
+			b = nb - 1
+		}
+		hist[b]++
+	}
 	m.stats = statsData{
 		field:  field,
 		count:  n,
@@ -1241,6 +1256,7 @@ func (m *Model) openStats(field string) {
 		sum:    sum,
 		mean:   sum / float64(n),
 		median: median,
+		hist:   hist,
 	}
 	m.mode = ModeStats
 }
@@ -1479,6 +1495,10 @@ func (m *Model) chartNextPrompt() (title string, items []string, need bool) {
 		}
 		if len(p) == 1 {
 			return "Y column (category)", m.activeColumns(), true
+		}
+	case chartCalendar:
+		if len(p) == 0 {
+			return "Date column", m.dateColumns(), true
 		}
 	}
 	return "", nil, false
