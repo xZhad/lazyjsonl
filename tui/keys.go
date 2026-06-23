@@ -13,6 +13,7 @@ type keyMap struct {
 	Sort     key.Binding
 	Stats    key.Binding
 	Group    key.Binding
+	Chart    key.Binding
 	File     key.Binding
 	Tab      key.Binding
 	Dive     key.Binding
@@ -41,6 +42,7 @@ var keys = keyMap{
 	Sort:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 	Stats:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "stats")),
 	Group:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "group by")),
+	Chart:    key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "visualize")),
 	File:     key.NewBinding(key.WithKeys("J", "K"), key.WithHelp("J/K", "file")),
 	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "pane")),
 	Dive:     key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "dive")),
@@ -76,7 +78,7 @@ func (m *Model) shortKeys() []key.Binding {
 func fullGroups() [][]key.Binding {
 	return [][]key.Binding{
 		{keys.Move, keys.Column, keys.Page, keys.Ends, keys.File, keys.Tab, keys.Jump},
-		{keys.Enter, keys.Sort, keys.Stats, keys.Group, keys.Dive, keys.Back, keys.Cols, keys.Filter, keys.Esc},
+		{keys.Enter, keys.Sort, keys.Stats, keys.Group, keys.Chart, keys.Dive, keys.Back, keys.Cols, keys.Filter, keys.Esc},
 		{keys.Yank, keys.YankCell, keys.Delete, keys.Export, keys.Reload, keys.Mouse, keys.Help, keys.Quit},
 	}
 }

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +15,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/NimbleMarkets/ntcharts/v2/barchart"
+	"github.com/NimbleMarkets/ntcharts/v2/canvas"
+	"github.com/NimbleMarkets/ntcharts/v2/canvas/runes"
+	"github.com/NimbleMarkets/ntcharts/v2/linechart/wavelinechart"
+	"github.com/NimbleMarkets/ntcharts/v2/sparkline"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -66,6 +73,9 @@ func (m *Model) render() string {
 	}
 	if m.mode == ModeGroup {
 		return m.renderGroup(w, h)
+	}
+	if m.mode == ModeChart {
+		return m.renderChart(w, h)
 	}
 	if m.mode == ModeDetail || m.mode == ModeDetailSearch {
 		return m.renderDetail(w, h)
@@ -466,6 +476,149 @@ func (m *Model) renderGroup(w, h int) string {
 	}
 	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+}
+
+var barPalette = []color.Color{cMagenta, cViolet, cCyan, cYellow, cGreen, cOrange}
+
+// numericValues collects up to capN numeric values of field across the result.
+func (m *Model) numericValues(field string, capN int) []float64 {
+	var out []float64
+	for _, d := range m.result.Docs() {
+		if f, ok := docFloat(d, field); ok {
+			out = append(out, f)
+			if len(out) >= capN {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (m *Model) renderChart(w, h int) string {
+	switch m.chartStep {
+	case 0:
+		return m.chartPicker(w, h, "Chart type", chartTypes)
+	case 1:
+		return m.chartPicker(w, h, "Chart column", m.activeColumns())
+	}
+	// step 2 — render the chart full-screen
+	chartW := w - 4
+	chartH := h - 4
+	if chartW < 8 {
+		chartW = 8
+	}
+	if chartH < 4 {
+		chartH = 4
+	}
+	var body string
+	switch m.chartType {
+	case 0:
+		body = m.buildBarChart(chartW, chartH)
+	case 1:
+		body = m.buildLineChart(chartW, chartH)
+	case 2:
+		body = m.buildSparkline(chartW, chartH)
+	}
+	title := paneTitle(true, "CHART · "+chartTypes[m.chartType]+" · "+m.chartCol)
+	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(title + "\n" + body)
+	footer := styleFooter.Width(w).Render(" " + keyHint("esc", "back") + keyHint("q", "quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
+}
+
+func (m *Model) chartPicker(w, h int, title string, items []string) string {
+	var b strings.Builder
+	b.WriteString(styleApp.Render(title) + styleMuted.Render("   ↑↓ select · ↵ next · esc back") + "\n")
+	b.WriteString(gradientRule(42) + "\n")
+	listH := h - 10
+	if listH < 3 {
+		listH = 3
+	}
+	start := 0
+	if m.chartCursor >= listH {
+		start = m.chartCursor - listH + 1
+	}
+	for i := start; i < len(items) && i < start+listH; i++ {
+		mark := "  "
+		name := styleText.Render(items[i])
+		if i == m.chartCursor {
+			mark = styleGutter.Render("▌ ")
+			name = styleSel.Render(" " + items[i] + " ")
+		}
+		b.WriteString(mark + name + "\n")
+	}
+	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m *Model) buildBarChart(w, h int) string {
+	groups := m.result.GroupBy(m.chartCol)
+	type kv struct {
+		k string
+		n int
+	}
+	rows := make([]kv, 0, len(groups))
+	for k, res := range groups {
+		rows = append(rows, kv{k, res.Count()})
+	}
+	sort.Slice(rows, func(a, b int) bool {
+		if rows[a].n != rows[b].n {
+			return rows[a].n > rows[b].n
+		}
+		return rows[a].k < rows[b].k
+	})
+	if len(rows) > 12 {
+		rows = rows[:12] // keep the chart legible
+	}
+	bc := barchart.New(w, h)
+	data := make([]barchart.BarData, len(rows))
+	for i, r := range rows {
+		st := lipgloss.NewStyle().Foreground(barPalette[i%len(barPalette)])
+		data[i] = barchart.BarData{
+			Label:  clip(r.k, 10),
+			Values: []barchart.BarValue{{Name: r.k, Value: float64(r.n), Style: st}},
+		}
+	}
+	bc.PushAll(data)
+	bc.Draw()
+	return bc.View()
+}
+
+func (m *Model) buildSparkline(w, h int) string {
+	vals := m.numericValues(m.chartCol, w*2)
+	if len(vals) == 0 {
+		return styleMuted.Render("‘" + m.chartCol + "’ has no numeric values")
+	}
+	sl := sparkline.New(w, h, sparkline.WithStyle(lipgloss.NewStyle().Foreground(cCyan)))
+	sl.PushAll(vals)
+	sl.Draw()
+	return sl.View()
+}
+
+func (m *Model) buildLineChart(w, h int) string {
+	vals := m.numericValues(m.chartCol, w)
+	if len(vals) == 0 {
+		return styleMuted.Render("‘" + m.chartCol + "’ has no numeric values")
+	}
+	lo, hi := vals[0], vals[0]
+	for _, v := range vals {
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+	}
+	if lo == hi { // avoid a zero-height range
+		hi = lo + 1
+	}
+	wl := wavelinechart.New(w, h)
+	wl.SetViewXYRange(0, float64(len(vals)-1), lo, hi)
+	wl.SetStyles(runes.ArcLineStyle, lipgloss.NewStyle().Foreground(cCyan))
+	for i, v := range vals {
+		wl.Plot(canvas.Float64Point{X: float64(i), Y: v})
+	}
+	wl.Draw()
+	return wl.View()
 }
 
 func scalarStr(v any) string {

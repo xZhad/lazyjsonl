@@ -30,7 +30,11 @@ const (
 	ModeDetailSearch
 	ModeStats
 	ModeGroup
+	ModeChart
 )
+
+// chartTypes are the offered chart kinds, in picker order.
+var chartTypes = []string{"bar (group counts)", "line", "sparkline"}
 
 // pickRow is one candidate column in the column picker (top-level or nested).
 type pickRow struct {
@@ -98,6 +102,11 @@ type Model struct {
 	groupField  string
 	groupRows   []groupRow
 	groupCursor int
+	// charts
+	chartStep   int // 0 pick type · 1 pick column · 2 render
+	chartType   int // index into chartTypes
+	chartCol    string
+	chartCursor int
 }
 
 // statsData is a numeric column summary.
@@ -391,6 +400,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case ModeGroup:
 			return m.updateGroup(msg)
+		case ModeChart:
+			return m.updateChart(msg)
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -655,6 +666,10 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.colCursor < len(cols) {
 			m.openGroup(cols[m.colCursor])
 		}
+	case "v":
+		m.chartStep = 0
+		m.chartCursor = 0
+		m.mode = ModeChart
 	case "d":
 		if _, ok := m.selectedDoc(); ok {
 			m.mode = ModeConfirm
@@ -1248,6 +1263,59 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.result = gr.res
 			m.page, m.cursor = 1, 0
 			m.status = "filtered: " + m.groupField + "=" + gr.key
+			m.mode = ModeList
+		}
+	}
+	return m, nil
+}
+
+// updateChart drives the chart wizard: pick type → pick column → render.
+func (m *Model) updateChart(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch m.chartStep {
+	case 0: // pick chart type
+		switch msg.String() {
+		case "esc", "q":
+			m.mode = ModeList
+		case "j", "down":
+			if m.chartCursor < len(chartTypes)-1 {
+				m.chartCursor++
+			}
+		case "k", "up":
+			if m.chartCursor > 0 {
+				m.chartCursor--
+			}
+		case "enter":
+			m.chartType = m.chartCursor
+			m.chartStep = 1
+			m.chartCursor = 0
+		}
+	case 1: // pick column
+		cols := m.activeColumns()
+		switch msg.String() {
+		case "esc":
+			m.chartStep = 0
+			m.chartCursor = 0
+		case "q":
+			m.mode = ModeList
+		case "j", "down":
+			if m.chartCursor < len(cols)-1 {
+				m.chartCursor++
+			}
+		case "k", "up":
+			if m.chartCursor > 0 {
+				m.chartCursor--
+			}
+		case "enter":
+			if m.chartCursor < len(cols) {
+				m.chartCol = cols[m.chartCursor]
+				m.chartStep = 2
+			}
+		}
+	case 2: // rendered chart
+		switch msg.String() {
+		case "esc":
+			m.chartStep = 1 // back to column pick
+		case "q":
 			m.mode = ModeList
 		}
 	}

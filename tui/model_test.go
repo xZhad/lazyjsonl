@@ -744,3 +744,39 @@ func TestStatsAndGroup(t *testing.T) {
 		t.Errorf("after group enter: mode=%v count=%d, want ModeList/3", m.mode, m.result.Count())
 	}
 }
+
+func TestChartWizard(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"p":"a","n":1}
+{"p":"b","n":2}
+{"p":"a","n":3}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.focus = FocusTable
+
+	m = send(m, kp('v'))
+	if m.mode != ModeChart || m.chartStep != 0 {
+		t.Fatalf("after v: mode=%v step=%d", m.mode, m.chartStep)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick type (bar)
+	if m.chartStep != 1 {
+		t.Fatalf("after type pick: step=%d, want 1", m.chartStep)
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // pick first column
+	if m.chartStep != 2 {
+		t.Fatalf("after col pick: step=%d, want 2", m.chartStep)
+	}
+	if out := m.buildBarChart(40, 10); out == "" {
+		t.Error("empty bar chart render")
+	}
+	if out := m.buildSparkline(40, 5); out == "" {
+		t.Error("empty sparkline render")
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // back to column pick
+	if m.chartStep != 1 {
+		t.Errorf("after esc: step=%d, want 1", m.chartStep)
+	}
+}
