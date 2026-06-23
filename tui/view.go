@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -26,6 +27,18 @@ func cell(s string, w int) string {
 		return string(r[:w-1]) + "…"
 	}
 	return s + strings.Repeat(" ", w-len(r))
+}
+
+// clip truncates s to at most n runes with an ellipsis (no padding).
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
 }
 
 func (m *Model) View() tea.View {
@@ -138,33 +151,21 @@ func (m *Model) tablePane(w, h int, active bool) string {
 		innerH = 1
 	}
 	contentW := inner - 1 // rightmost column reserved for the scrollbar
-	if contentW < 2 {
-		contentW = 2
+	if contentW < 4 {
+		contentW = 4
 	}
 
-	cols := m.activeColumns()
-	colW := 16
-	if n := len(cols); n > 0 {
-		colW = (contentW-2)/n - 1
-		if colW < 10 {
-			colW = 10
-		}
-		if colW > 22 {
-			colW = 22
-		}
-	}
-	if maxCols := (contentW - 2) / (colW + 1); maxCols >= 1 && maxCols < len(cols) {
-		cols = cols[:maxCols]
-	}
-
-	// header (cell() truncates → no wrap; trailing space = column gap)
-	header := "  "
 	drillPrefix := m.drillPrefix()
-	for i, c := range cols {
+	pageDocs := m.pageRows()
+
+	// Build each candidate column's header + clipped cells, measuring its
+	// natural width, then greedily keep the columns that fit contentW (each
+	// costs its width + 2 padding + 1 separator). This shows as many columns
+	// as fit without lipgloss starving short-value columns to a "…" header.
+	headerLabel := func(c string) string {
 		label := c
-		// While dived, drop the drill prefix from headers: message.api → .api
 		if drillPrefix != "" && strings.HasPrefix(c, drillPrefix+".") {
-			label = strings.TrimPrefix(c, drillPrefix)
+			label = strings.TrimPrefix(c, drillPrefix) // message.usage.input → .input
 		}
 		if c == m.sortField {
 			if m.sortDesc {
@@ -173,56 +174,84 @@ func (m *Model) tablePane(w, h int, active bool) string {
 				label += " ▲"
 			}
 		}
-		st := styleHeader
-		if i == m.colCursor && active {
-			st = styleSortCol
-		}
-		header += st.Render(cell(label, colW) + " ")
+		return label
 	}
+
+	var headers []string
+	var data [][]string // column-major while building, transposed below
+	used := 0
+	for _, c := range m.activeColumns() {
+		label := headerLabel(c)
+		colCells := make([]string, len(pageDocs))
+		wmax := len([]rune(label))
+		for r, d := range pageDocs {
+			txt, _ := cellValue(d, c)
+			txt = clip(txt, 32)
+			colCells[r] = txt
+			if l := len([]rune(txt)); l > wmax {
+				wmax = l
+			}
+		}
+		if len(headers) > 0 && used+wmax+3 > contentW {
+			break
+		}
+		used += wmax + 3
+		headers = append(headers, label)
+		data = append(data, colCells)
+	}
+	cols := m.activeColumns()[:len(headers)]
+
+	rowsOut := make([][]string, len(pageDocs))
+	for r := range pageDocs {
+		cells := make([]string, len(headers))
+		for ci := range headers {
+			cells[ci] = data[ci][r]
+		}
+		rowsOut[r] = cells
+	}
+
+	tbl := table.New().
+		Headers(headers...).
+		Rows(rowsOut...).
+		Wrap(false).
+		BorderColumn(true).BorderHeader(true).BorderRow(false).
+		BorderTop(false).BorderBottom(false).BorderLeft(false).BorderRight(false).
+		BorderStyle(lipgloss.NewStyle().Foreground(cIdle)).
+		Width(contentW).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			switch {
+			case row == table.HeaderRow:
+				if col < len(cols) && (cols[col] == m.sortField || (active && col == m.colCursor)) {
+					return styleSortCol.Padding(0, 1)
+				}
+				return styleHeader.Padding(0, 1)
+			case row == m.cursor:
+				return styleSel.Padding(0, 1)
+			case row < len(pageDocs) && col < len(cols):
+				_, st := cellValue(pageDocs[row], cols[col])
+				return st.Padding(0, 1)
+			default:
+				return styleText.Padding(0, 1)
+			}
+		})
+
+	tblLines := strings.Split(tbl.String(), "\n")
+	sb := scrollbar(len(tblLines), m.result.Count(), m.pageSize, (m.page-1)*m.pageSize)
+	body := make([]string, len(tblLines))
+	for i, ln := range tblLines {
+		sc := " "
+		if i < len(sb) {
+			sc = sb[i]
+		}
+		body[i] = padTo(ln, contentW) + sc
+	}
+
 	titleStr := "RECORDS"
 	if len(m.drillPath) > 0 {
 		titleStr += " · " + strings.Join(m.drillCrumbs(), " ▸ ")
 	}
-
-	rows := m.pageRows()
-	regionH := innerH - 2 // lines below title + header
-	if regionH < 0 {
-		regionH = 0
-	}
-	sb := scrollbar(regionH, m.result.Count(), m.pageSize, (m.page-1)*m.pageSize)
-
-	lines := make([]string, 0, innerH)
-	lines = append(lines, padTo(paneTitle(active, titleStr), contentW)+" ")
-	lines = append(lines, padTo(header, contentW)+" ")
-	for j := 0; j < regionH; j++ {
-		var content string
-		switch {
-		case j < len(rows):
-			if j == m.cursor {
-				row := styleSelGut.Render("▌ ")
-				for _, c := range cols {
-					txt, _ := cellValue(rows[j], c)
-					row += styleSel.Render(cell(txt, colW) + " ")
-				}
-				content = styleSel.Width(contentW).Render(row)
-			} else {
-				row := "  "
-				for _, c := range cols {
-					txt, st := cellValue(rows[j], c)
-					row += st.Render(cell(txt, colW) + " ")
-				}
-				content = padTo(row, contentW)
-			}
-		default:
-			content = padTo("", contentW)
-		}
-		sc := " "
-		if j < len(sb) {
-			sc = sb[j]
-		}
-		lines = append(lines, content+sc)
-	}
-	return pane(active).Width(w).Height(h).MaxHeight(h).Render(strings.Join(lines, "\n"))
+	content := padTo(paneTitle(active, titleStr), inner) + "\n" + strings.Join(body, "\n")
+	return pane(active).Width(w).Height(h).MaxHeight(h).Render(content)
 }
 
 // cellValue resolves a column's value for a row and the style to draw it in
@@ -327,12 +356,8 @@ func (m *Model) renderFooter(w int) string {
 			return styleFooter.Width(w).Render(s)
 		}
 	}
-	rightW := 16
-	if m.status != "" {
-		rightW += len(m.status) + 4
-	}
-	m.help.SetWidth(w - rightW)
-	left := " " + m.help.ShortHelpView(m.shortKeys())
+	m.help.SetWidth(w)
+	left := " " + m.help.ShortHelpView(m.shortKeys()) // bar() truncates to fit
 	right := ""
 	if m.status != "" {
 		st := styleOK

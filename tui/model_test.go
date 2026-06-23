@@ -592,3 +592,22 @@ func TestNullCellValue(t *testing.T) {
 		t.Errorf("absent key text = %q, want empty", txt)
 	}
 }
+
+func TestEscBacksOutOfDive(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"id":"a","message":{"role":"user"}}`+"\n"), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m.showAllColumns = true
+	m.columns = []string{"id", "message"}
+	m.colCursor = 1
+	m = send(m, kp(' ')) // dive into message
+	if len(m.drillPath) != 1 {
+		t.Fatalf("drillPath after dive = %d, want 1", len(m.drillPath))
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // esc backs out
+	if len(m.drillPath) != 0 {
+		t.Errorf("drillPath after esc = %d, want 0", len(m.drillPath))
+	}
+}

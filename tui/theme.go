@@ -6,6 +6,7 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Palette — synthwave, from the user's WezTerm theme.
@@ -115,8 +116,13 @@ func keyHint(key, desc string) string {
 	return styleKey.Render(key) + styleMuted.Render(" "+desc+"   ")
 }
 
-// bar lays left and right on a w-wide line (ANSI-aware spacing), over the bar bg.
+// bar lays left and right on a w-wide line (ANSI-aware spacing), over the bar
+// bg. The left side is truncated if needed so the bar never wraps.
 func bar(w int, left, right string) string {
+	maxLeft := w - lipgloss.Width(right) - 1
+	if maxLeft > 0 && lipgloss.Width(left) > maxLeft {
+		left = ansi.Truncate(left, maxLeft, "…")
+	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1

@@ -38,7 +38,7 @@ var keys = keyMap{
 	File:   key.NewBinding(key.WithKeys("J", "K"), key.WithHelp("J/K", "file")),
 	Tab:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "pane")),
 	Dive:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "dive")),
-	Back:   key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "back")),
+	Back:   key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
 	Enter:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "view")),
 	Filter: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 	Search: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),

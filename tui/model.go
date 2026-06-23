@@ -509,14 +509,16 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeFilter
 		return m, cmd
 	case "esc":
-		if m.filter != "" {
+		if len(m.drillPath) > 0 {
+			m.popDrill() // back out of a dive first
+		} else if m.filter != "" {
 			m.filter = ""
 			m.applyFilter() // re-query all
 		}
 	case " ", "space":
 		m.drillInto() // dive into the focused object column → its subfields become columns
 	case "backspace":
-		m.popDrill() // back out one level
+		m.popDrill() // alias for esc when dived
 	case "c":
 		m.openColumnPicker()
 		return m, nil
