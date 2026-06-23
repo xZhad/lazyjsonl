@@ -29,8 +29,18 @@ func TestParseArgsOut(t *testing.T) {
 }
 
 func TestParseArgsNoPath(t *testing.T) {
-	if _, _, err := parseArgs([]string{"--count"}); err == nil {
-		t.Errorf("expected error when no path given")
+	// no path → defaults to the current directory
+	opts, _, err := parseArgs([]string{"--count"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if opts.Path != "." {
+		t.Errorf("default path = %q, want \".\"", opts.Path)
+	}
+	// bare invocation also defaults to "."
+	opts, _, err = parseArgs([]string{})
+	if err != nil || opts.Path != "." {
+		t.Errorf("bare parseArgs: path=%q err=%v, want \".\"/nil", opts.Path, err)
 	}
 }
 

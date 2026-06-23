@@ -27,6 +27,7 @@ go install github.com/xZhad/lazyjsonl@latest
 ## Usage
 
 ```sh
+lazyjsonl                     # current directory (same as `lazyjsonl .`)
 lazyjsonl data.jsonl          # open a single file
 lazyjsonl ./logs              # open a directory (browse every *.jsonl)
 lazyjsonl .                   # current directory

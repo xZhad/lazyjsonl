@@ -55,7 +55,7 @@ func parseArgs(args []string) (cli.Options, bool, error) {
 		}
 	}
 	if opts.Path == "" {
-		return opts, false, errors.New("usage: lazyjsonl <file.jsonl|dir> [--filter DSL] [--count] [--out FILE] [--output FORMAT]")
+		opts.Path = "." // no path given → current directory
 	}
 	runCLI := explicitCLI || !term.IsTerminal(int(os.Stdout.Fd()))
 	return opts, runCLI, nil
