@@ -41,6 +41,9 @@ func (m *Model) render() string {
 	if m.showHelp {
 		return m.renderHelp(w, h)
 	}
+	if m.mode == ModeColumns {
+		return m.renderColumns(w, h)
+	}
 	if m.mode == ModeDetail {
 		return m.renderDetail(w, h)
 	}
@@ -163,15 +166,32 @@ func (m *Model) tablePane(w, h int, active bool) string {
 func rowCells(d jsonldb.Doc, cols []string) []string {
 	out := make([]string, len(cols))
 	for i, c := range cols {
+		if strings.Contains(c, ".") { // nested (dotted) column
+			if raw, ok := d.Path(c); ok {
+				out[i] = scalarStr(raw)
+			}
+			continue
+		}
 		v := d.GetString(c)
 		if v == "" {
 			if raw, ok := d.Get(c); ok {
-				v = fmt.Sprintf("%v", raw)
+				v = scalarStr(raw)
 			}
 		}
 		out[i] = v
 	}
 	return out
+}
+
+func scalarStr(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", x)
+	}
 }
 
 func (m *Model) renderFooter(w int) string {
@@ -190,7 +210,7 @@ func (m *Model) renderFooter(w int) string {
 		}
 	}
 	left := " " + keyHint("j/k", "move") + keyHint("h/l", "page") + keyHint("/", "filter") +
-		keyHint("↵", "view") + keyHint("s", "sort") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
+		keyHint("↵", "view") + keyHint("s", "sort") + keyHint("c", "cols") + keyHint("tab", "pane") + keyHint("?", "help") + keyHint("q", "quit")
 	right := ""
 	if m.status != "" {
 		st := styleOK
@@ -216,13 +236,14 @@ func (m *Model) renderHelp(w, h int) string {
 		{"j / k  ↑ ↓", "move cursor (in focused pane)"},
 		{"h / l  ← →", "previous / next page"},
 		{"g / G", "first / last page"},
-		{"H / L", "move column cursor"},
+		{"H / L  ⌥ ← →", "move column cursor"},
 		{"s", "sort by column (toggles ▲/▼)"},
 		{"J / K", "next / previous file"},
 		{"tab", "switch focus (files ↔ table)"},
 		{"enter", "open record detail"},
-		{"/", "filter (jsonldb query DSL)"},
-		{"c", "toggle all columns"},
+		{"/", "filter (DSL, incl. nested: message.role=user)"},
+		{"esc", "clear filter"},
+		{"c", "choose columns (incl. nested fields)"},
 		{"d", "delete record (confirm)"},
 		{"e", "export view → .export.jsonl"},
 		{"y", "yank record JSON to clipboard"},
@@ -240,6 +261,40 @@ func (m *Model) renderHelp(w, h int) string {
 		styleHeader.Render("topic~=ml") + styleMuted.Render("  ") +
 		styleHeader.Render("a=1 (b=2 |= c=3)") + styleMuted.Render("  ") +
 		styleHeader.Render("!x  n>=5"))
+	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m *Model) renderColumns(w, h int) string {
+	var b strings.Builder
+	b.WriteString(styleApp.Render("Columns") +
+		styleMuted.Render("   space toggle · a all · N none · ↵ apply · esc cancel") + "\n\n")
+	listH := h - 8
+	if listH < 4 {
+		listH = 4
+	}
+	start := 0
+	if m.pickCursor >= listH {
+		start = m.pickCursor - listH + 1
+	}
+	for i := start; i < len(m.pickList) && i < start+listH; i++ {
+		r := m.pickList[i]
+		box := styleMuted.Render("○")
+		if m.picked[r.key] {
+			box = styleOK.Render("✓")
+		}
+		mark := "  "
+		if i == m.pickCursor {
+			mark = styleGutter.Render("▌ ")
+		}
+		var name string
+		if r.depth > 0 {
+			name = "  " + styleMuted.Render("· ") + styleText.Render(r.key)
+		} else {
+			name = styleHeader.Render(r.key)
+		}
+		b.WriteString(mark + box + " " + name + "\n")
+	}
 	box := styleOverlay.Render(strings.TrimRight(b.String(), "\n"))
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }

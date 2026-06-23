@@ -19,7 +19,14 @@ const (
 	ModeDetail
 	ModeFilter
 	ModeConfirm
+	ModeColumns
 )
+
+// pickRow is one candidate column in the column picker (top-level or nested).
+type pickRow struct {
+	key   string // full dotted key (e.g. "message.role")
+	depth int    // 0 = top-level, 1 = nested child
+}
 
 type Focus int
 
@@ -53,6 +60,10 @@ type Model struct {
 	showHelp       bool
 	defaultCap     int
 	status         string
+	// column picker
+	pickList   []pickRow
+	picked     map[string]bool
+	pickCursor int
 }
 
 // discoverFiles returns the .jsonl files for a directory path (sorted), or [path] for a file.
@@ -254,6 +265,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilter(msg)
 		case ModeConfirm:
 			return m.updateConfirm(msg)
+		case ModeColumns:
+			return m.updateColumns(msg)
 		}
 	}
 	return m, nil
@@ -335,11 +348,14 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.filterSaved = m.filter
 		m.mode = ModeFilter
 		return m, nil
-	case "c":
-		m.showAllColumns = !m.showAllColumns
-		if m.colCursor >= len(m.activeColumns()) {
-			m.colCursor = 0
+	case "esc":
+		if m.filter != "" {
+			m.filter = ""
+			m.applyFilter() // re-query all
 		}
+	case "c":
+		m.openColumnPicker()
+		return m, nil
 	case "?":
 		m.showHelp = !m.showHelp
 	case "y":
@@ -361,11 +377,11 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "exported to " + exportBase
 		}
-	case "L", "shift+right":
+	case "L", "alt+right":
 		if m.colCursor < len(m.activeColumns())-1 {
 			m.colCursor++
 		}
-	case "H", "shift+left":
+	case "H", "alt+left":
 		if m.colCursor > 0 {
 			m.colCursor--
 		}
@@ -474,6 +490,84 @@ func (m *Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeList
 	}
 	return m, nil
+}
+
+// openColumnPicker builds the candidate list (top-level schema fields + one
+// level of nested object children) and enters the picker, preselecting the
+// currently-shown columns.
+func (m *Model) openColumnPicker() {
+	m.picked = map[string]bool{}
+	for _, c := range m.columns {
+		m.picked[c] = true
+	}
+	m.buildPickList()
+	m.pickCursor = 0
+	m.mode = ModeColumns
+}
+
+func (m *Model) buildPickList() {
+	m.pickList = nil
+	sample, _ := m.col.First()
+	for _, f := range m.schema {
+		m.pickList = append(m.pickList, pickRow{key: f.Key, depth: 0})
+		if v, ok := sample.Get(f.Key); ok {
+			if obj, ok := v.(map[string]any); ok {
+				keys := make([]string, 0, len(obj))
+				for k := range obj {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					m.pickList = append(m.pickList, pickRow{key: f.Key + "." + k, depth: 1})
+				}
+			}
+		}
+	}
+}
+
+func (m *Model) updateColumns(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		if m.pickCursor < len(m.pickList)-1 {
+			m.pickCursor++
+		}
+	case "k", "up":
+		if m.pickCursor > 0 {
+			m.pickCursor--
+		}
+	case " ", "space":
+		if m.pickCursor < len(m.pickList) {
+			k := m.pickList[m.pickCursor].key
+			m.picked[k] = !m.picked[k]
+		}
+	case "a":
+		for _, r := range m.pickList {
+			m.picked[r.key] = true
+		}
+	case "N":
+		m.picked = map[string]bool{}
+	case "enter", "c", "tab", "esc", "q", "ctrl+c":
+		m.applyColumnPick()
+		m.mode = ModeList
+	}
+	return m, nil
+}
+
+func (m *Model) applyColumnPick() {
+	var cols []string
+	for _, r := range m.pickList {
+		if m.picked[r.key] {
+			cols = append(cols, r.key)
+		}
+	}
+	if len(cols) == 0 {
+		return // keep current columns; never show zero
+	}
+	m.columns = cols
+	m.showAllColumns = true // selection is explicit now
+	if m.colCursor >= len(cols) {
+		m.colCursor = 0
+	}
 }
 
 func (m *Model) Close() error { return m.col.Close() }

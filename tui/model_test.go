@@ -319,28 +319,44 @@ func TestDeleteRow(t *testing.T) {
 	}
 }
 
-func TestColumnToggleAndHelp(t *testing.T) {
+func TestColumnPicker(t *testing.T) {
 	m, _ := New(fixture(t))
 	defer m.col.Close()
-	full := len(m.columns)
-	_ = m.columns // unchanged; cap default is 8 so all 4 show
-	// force a small cap to see toggle effect
-	m.defaultCap = 2
-	if len(m.visibleColumns(m.defaultCap)) != 2 {
-		t.Fatalf("expected capped 2")
-	}
+	// c opens the picker, preselecting current columns
 	mi, _ := m.Update(key('c'))
 	m = mi.(*Model)
-	if !m.showAllColumns {
-		t.Errorf("c should toggle showAllColumns on")
+	if m.mode != ModeColumns {
+		t.Fatalf("c should open column picker, mode=%v", m.mode)
 	}
-	if len(m.activeColumns()) != full {
-		t.Errorf("showAll should reveal all %d columns, got %d", full, len(m.activeColumns()))
+	if len(m.pickList) == 0 {
+		t.Fatal("pick list empty")
 	}
-	mi, _ = m.Update(key('?'))
+	// toggle the first candidate off, then apply with enter
+	first := m.pickList[0].key
+	mi, _ = m.Update(key(' ')) // space toggles
+	m = mi.(*Model)
+	if m.picked[first] {
+		t.Errorf("space should have toggled %q off", first)
+	}
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mi.(*Model)
+	if m.mode != ModeList {
+		t.Errorf("enter should apply + return to list, mode=%v", m.mode)
+	}
+	for _, c := range m.columns {
+		if c == first {
+			t.Errorf("deselected column %q still shown", first)
+		}
+	}
+}
+
+func TestHelpToggle(t *testing.T) {
+	m, _ := New(fixture(t))
+	defer m.col.Close()
+	mi, _ := m.Update(key('?'))
 	m = mi.(*Model)
 	if !m.showHelp {
-		t.Errorf("? should toggle help")
+		t.Errorf("? should toggle help on")
 	}
 }
 
