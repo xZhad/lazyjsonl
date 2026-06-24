@@ -1073,3 +1073,42 @@ not json
 		t.Errorf("status = %q, want skipped notice", m.status)
 	}
 }
+
+func TestDiffRecords(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"id":"a","score":10,"only_a":true}
+{"id":"b","score":10,"only_b":9}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.focus = FocusTable
+	m.cursor = 0
+	m = send(m, kp('x')) // mark row 0
+	if !m.diffMarkSet {
+		t.Fatal("first x should mark")
+	}
+	m.cursor = 1
+	m = send(m, kp('x')) // diff against row 1
+	if m.mode != ModeDiff {
+		t.Fatalf("second x mode = %v, want ModeDiff", m.mode)
+	}
+	rows := diffRecords(m.diffA, m.diffB)
+	got := map[string]int{}
+	for _, r := range rows {
+		got[r.key] = r.state
+	}
+	if got["id"] != 1 {
+		t.Errorf("id state = %d, want 1 (changed)", got["id"])
+	}
+	if got["score"] != 0 {
+		t.Errorf("score state = %d, want 0 (same)", got["score"])
+	}
+	if got["only_a"] != 2 {
+		t.Errorf("only_a state = %d, want 2 (only-A)", got["only_a"])
+	}
+	if got["only_b"] != 3 {
+		t.Errorf("only_b state = %d, want 3 (only-B)", got["only_b"])
+	}
+}

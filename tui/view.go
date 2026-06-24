@@ -59,6 +59,9 @@ func (m *Model) View() tea.View {
 
 func (m *Model) render() string {
 	w, h := m.width, m.height
+	if w == 0 || h == 0 { // first paint, before the size is known
+		return "  " + gradientText("lazyjsonl", m.frame) + styleMuted.Render("  loading…")
+	}
 	if w < 24 || h < 8 {
 		return "terminal too small — resize"
 	}
@@ -76,6 +79,9 @@ func (m *Model) render() string {
 	}
 	if m.mode == ModeChart {
 		return m.renderChart(w, h)
+	}
+	if m.mode == ModeDiff {
+		return m.renderDiff(w, h)
 	}
 	if m.mode == ModeDetail || m.mode == ModeDetailSearch {
 		return m.renderDetail(w, h)
@@ -1078,6 +1084,89 @@ func relTime(s string) string {
 	return r + " ago"
 }
 
+type diffRow struct {
+	key, a, b string
+	state     int // 0 same · 1 changed · 2 only-A · 3 only-B
+}
+
+func rawMap(d jsonldb.Doc) map[string]any {
+	var m map[string]any
+	_ = json.Unmarshal(d.Raw(), &m)
+	return m
+}
+
+func diffRecords(a, b jsonldb.Doc) []diffRow {
+	ma, mb := rawMap(a), rawMap(b)
+	seen := map[string]bool{}
+	var keys []string
+	for k := range ma {
+		seen[k] = true
+		keys = append(keys, k)
+	}
+	for k := range mb {
+		if !seen[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	out := make([]diffRow, 0, len(keys))
+	for _, k := range keys {
+		va, oka := ma[k]
+		vb, okb := mb[k]
+		as, bs := scalarStr(va), scalarStr(vb)
+		st := 0
+		switch {
+		case !oka:
+			st = 3
+		case !okb:
+			st = 2
+		case as != bs:
+			st = 1
+		}
+		out = append(out, diffRow{k, as, bs, st})
+	}
+	return out
+}
+
+func (m *Model) renderDiff(w, h int) string {
+	rows := diffRecords(m.diffA, m.diffB)
+	inner := w - 2
+	keyW := 22
+	valW := (inner - keyW - 2) / 2
+	if valW < 6 {
+		valW = 6
+	}
+	var b strings.Builder
+	b.WriteString(paneTitle(true, fmt.Sprintf("DIFF · line %d vs line %d", m.diffA.Line(), m.diffB.Line())) + "\n")
+	b.WriteString(styleHeader.Render(cell("field", keyW)) + " " +
+		styleHeader.Render(cell("A·"+fmt.Sprint(m.diffA.Line()), valW)) + " " +
+		styleHeader.Render(cell("B·"+fmt.Sprint(m.diffB.Line()), valW)) + "\n")
+	nDiff := 0
+	for _, r := range rows {
+		ks := styleMuted
+		av, bv := r.a, r.b
+		switch r.state {
+		case 1:
+			ks = styleSortCol
+			nDiff++
+		case 2:
+			ks = styleDanger
+			bv = "—"
+			nDiff++
+		case 3:
+			ks = styleOK
+			av = "—"
+			nDiff++
+		}
+		b.WriteString(ks.Render(cell(r.key, keyW)) + " " +
+			styleText.Render(cell(av, valW)) + " " + styleText.Render(cell(bv, valW)) + "\n")
+	}
+	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(strings.TrimRight(b.String(), "\n"))
+	foot := styleFooter.Width(w).Render(" " + styleMuted.Render(fmt.Sprintf("%d field(s) differ", nDiff)) +
+		"   " + keyHint("esc", "back"))
+	return lipgloss.JoinVertical(lipgloss.Left, box, foot)
+}
+
 // docRaw returns a column's raw value (plain or dotted path).
 func docRaw(d jsonldb.Doc, field string) (any, bool) {
 	if strings.Contains(field, ".") {
@@ -1205,11 +1294,20 @@ func (m *Model) renderFooter(w int) string {
 	left := " " + m.help.ShortHelpView(m.shortKeys()) // bar() truncates to fit
 	right := ""
 	if m.status != "" {
-		st := styleOK
+		fg := cGreen
 		if strings.Contains(m.status, "fail") || strings.Contains(m.status, "unavailable") {
-			st = styleDanger
+			fg = cRed
 		}
-		right += st.Render("● " + m.status + "  ")
+		// fade the toast toward the bar background over its last ~second
+		if age := m.frame - m.statusFrame; age > statusTTL-statusFade {
+			t := float64(age-(statusTTL-statusFade)) / float64(statusFade)
+			if t > 1 {
+				t = 1
+			}
+			ramp := lipgloss.Blend1D(20, fg, cBar)
+			fg = ramp[int(t*19)]
+		}
+		right += lipgloss.NewStyle().Foreground(fg).Render("● " + m.status + "  ")
 	}
 	right += lipgloss.NewStyle().Foreground(cViolet).Bold(true).Render(fmt.Sprintf("page %d/%d ", m.page, m.pageCount()))
 	return bar(w, left, right)

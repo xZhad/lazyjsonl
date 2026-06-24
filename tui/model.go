@@ -32,6 +32,7 @@ const (
 	ModeStats
 	ModeGroup
 	ModeChart
+	ModeDiff
 )
 
 const (
@@ -89,6 +90,12 @@ type Model struct {
 	watchMod       time.Time
 	defaultCap     int
 	status         string
+	statusFrame    int // animation frame when status was last set (toast fade)
+	// diff
+	diffMark    jsonldb.Doc
+	diffMarkSet bool
+	diffA       jsonldb.Doc
+	diffB       jsonldb.Doc
 	// column picker
 	pickList   []pickRow
 	picked     map[string]bool
@@ -378,10 +385,30 @@ func (m *Model) pageRows() []jsonldb.Doc {
 	return m.result.Page(m.page, m.pageSize).Docs()
 }
 
+// statusTTL/statusFade are in animation frames (~12fps): a toast lives ~4s
+// then fades over its last ~1s.
+const statusTTL = animFPS * 4
+const statusFade = animFPS
+
+// Update wraps update() to stamp the toast timer whenever the status changes,
+// so every status setter gets fade-out for free.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prev := m.status
+	model, cmd := m.update(msg)
+	mm := model.(*Model)
+	if mm.status != prev && mm.status != "" {
+		mm.statusFrame = mm.frame
+	}
+	return mm, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		m.frame++
+		if m.status != "" && m.frame-m.statusFrame > statusTTL {
+			m.status = "" // toast expired
+		}
 		return m, tick()
 	case tea.MouseWheelMsg:
 		return m.handleWheel(msg)
@@ -435,6 +462,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateGroup(msg)
 		case ModeChart:
 			return m.updateChart(msg)
+		case ModeDiff:
+			m.mode = ModeList // any key closes the diff
+			return m, nil
 		}
 	}
 	// Forward non-key messages (e.g. cursor blink, mouse) to the focused
@@ -698,6 +728,18 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		cols := m.activeColumns()
 		if m.colCursor < len(cols) {
 			m.openGroup(cols[m.colCursor])
+		}
+	case "x": // mark a record for diff; second mark opens the diff
+		if d, ok := m.selectedDoc(); ok {
+			if !m.diffMarkSet {
+				m.diffMark = d
+				m.diffMarkSet = true
+				m.status = fmt.Sprintf("marked line %d — x another to diff", d.Line())
+			} else {
+				m.diffA, m.diffB = m.diffMark, d
+				m.diffMarkSet = false
+				m.mode = ModeDiff
+			}
 		}
 	case "w": // toggle watch/tail (auto-reload on file change)
 		m.watch = !m.watch
