@@ -98,7 +98,11 @@ func (m *Model) currentLabel() string {
 
 func (m *Model) renderTitle(w int) string {
 	left := " " + gradientText("lazyjsonl", m.frame) + " " + stylePath.Render("· "+m.currentLabel())
-	right := styleCount.Render(fmt.Sprintf("%d records ", m.result.Count()))
+	right := ""
+	if m.watch {
+		right += styleOK.Render("● watch ")
+	}
+	right += styleCount.Render(fmt.Sprintf("%d records ", m.result.Count()))
 	return bar(w, left, right)
 }
 

@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	github.com/NimbleMarkets/ntcharts/v2 v2.2.0
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/xZhad/jsonldb v0.2.1
+	github.com/xZhad/jsonldb v0.2.2
 	golang.org/x/term v0.44.0
 )
 

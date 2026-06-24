@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
@@ -84,6 +85,8 @@ type Model struct {
 	showAllColumns bool
 	showHelp       bool
 	pretty         bool // smart value formatting (durations, bytes, commas, rel time)
+	watch          bool // tail/auto-reload on file change
+	watchMod       time.Time
 	defaultCap     int
 	status         string
 	// column picker
@@ -270,6 +273,14 @@ func (m *Model) openCurrent() error {
 	m.filter = ""
 	m.filterErr = nil
 	m.page, m.cursor, m.colCursor, m.colOffset = 1, 0, 0, 0
+	if n := c.Skipped(); n > 0 {
+		m.status = fmt.Sprintf("skipped %d malformed line(s)", n)
+	}
+	if m.watch { // re-baseline mtime so switching files doesn't trigger a reload
+		if fi, err := os.Stat(cf[m.fileIdx]); err == nil {
+			m.watchMod = fi.ModTime()
+		}
+	}
 	return nil
 }
 
@@ -374,6 +385,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case tea.MouseWheelMsg:
 		return m.handleWheel(msg)
+	case watchMsg:
+		if !m.watch {
+			return m, nil // toggled off → stop the loop
+		}
+		return m, m.pollWatch()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// rows that fit the records pane: total height minus the app title,
@@ -683,6 +699,19 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.colCursor < len(cols) {
 			m.openGroup(cols[m.colCursor])
 		}
+	case "w": // toggle watch/tail (auto-reload on file change)
+		m.watch = !m.watch
+		if m.watch {
+			if cf := m.curFiles(); len(cf) > 0 {
+				if fi, err := os.Stat(cf[m.fileIdx]); err == nil {
+					m.watchMod = fi.ModTime()
+				}
+			}
+			m.status = "watching"
+			return m, watchTick()
+		}
+		m.status = "watch off"
+		return m, nil
 	case "#": // toggle smart value formatting
 		m.pretty = !m.pretty
 		if m.pretty {
@@ -1392,6 +1421,28 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// pollWatch reloads the current file if it changed on disk and tails to the
+// last page, then re-arms the watch tick.
+func (m *Model) pollWatch() tea.Cmd {
+	cf := m.curFiles()
+	if len(cf) > 0 {
+		if fi, err := os.Stat(cf[m.fileIdx]); err == nil && fi.ModTime().After(m.watchMod) {
+			m.watchMod = fi.ModTime()
+			if err := m.col.Reload(); err == nil {
+				m.refresh()
+				m.page = m.pageCount() // tail: jump to newest records
+				if rows := len(m.pageRows()); rows > 0 {
+					m.cursor = rows - 1
+				} else {
+					m.cursor = 0
+				}
+				m.status = "reloaded ●"
+			}
+		}
+	}
+	return watchTick()
 }
 
 // filterFromCell ANDs a clause for the focused cell onto the current filter

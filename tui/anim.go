@@ -18,6 +18,13 @@ func tick() tea.Cmd {
 	return tea.Tick(time.Second/animFPS, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// watchMsg drives the watch/tail poll loop (once per second while enabled).
+type watchMsg time.Time
+
+func watchTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return watchMsg(t) })
+}
+
 // gradientText renders s with a synthwave color ramp that slides by `frame`,
 // producing an animated shimmer across the wordmark.
 func gradientText(s string, frame int) string {

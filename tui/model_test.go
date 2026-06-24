@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/xZhad/jsonldb"
@@ -1029,5 +1030,46 @@ func TestSmartFormatters(t *testing.T) {
 		if got := formatNumberCol(c.col, c.f); got != c.want {
 			t.Errorf("formatNumberCol(%q,%g) = %q, want %q", c.col, c.f, got, c.want)
 		}
+	}
+}
+
+func TestWatchReload(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.jsonl")
+	os.WriteFile(p, []byte(`{"a":1}`+"\n"+`{"a":2}`+"\n"), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.focus = FocusTable
+	// enable watch with an ancient baseline so any change triggers reload
+	m = send(m, kp('w'))
+	if !m.watch {
+		t.Fatal("watch not enabled")
+	}
+	m.watchMod = time.Unix(0, 0)
+	// append a record on disk
+	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0644)
+	f.WriteString(`{"a":3}` + "\n")
+	f.Close()
+	m = send(m, watchMsg(time.Unix(100, 0)))
+	if m.result.Count() != 3 {
+		t.Errorf("after watch reload count = %d, want 3", m.result.Count())
+	}
+}
+
+func TestMalformedLinesSkipped(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"a":1}
+not json
+{"a":2}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	if m.result.Count() != 2 {
+		t.Errorf("count = %d, want 2 (bad line skipped)", m.result.Count())
+	}
+	if !strings.Contains(m.status, "skipped") {
+		t.Errorf("status = %q, want skipped notice", m.status)
 	}
 }
