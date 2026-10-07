@@ -29,11 +29,13 @@ go install github.com/xZhad/lazyjsonl@latest
 ```sh
 lazyjsonl                     # current directory (same as `lazyjsonl .`)
 lazyjsonl data.jsonl          # open a single file
-lazyjsonl ./logs              # open a directory (browse every *.jsonl)
-lazyjsonl .                   # current directory
+lazyjsonl ./logs              # open a directory (browse every *.jsonl; TUI only)
+lazyjsonl .                   # current directory (TUI only)
 ```
 
-When stdout is a terminal, lazyjsonl launches the interactive TUI. When piped — or when a CLI flag is given — it runs non-interactively.
+Folders are a TUI feature: the CLI (flags or piped output) reads exactly one `.jsonl` file and says so if given a folder. A path starting with `-` must be written `./-name`.
+
+When stdout is a terminal, lazyjsonl launches the interactive TUI. When piped — or when any of `--filter`, `--count`, `--out` or `--output` is given — it runs non-interactively. `lazyjsonl --help` (or `-h`) prints the usage; any other unknown `-`/`--` argument is rejected with a pointer to it.
 
 ### CLI mode (pipe-friendly)
 
@@ -52,8 +54,11 @@ lazyjsonl data.jsonl --filter "completed=true" --out done.jsonl
 |------|---------|
 | `--filter <dsl>` | filter expression (see below) |
 | `--count` | print the number of matches instead of records |
-| `--out <file>` | write matching records to a file (atomic) instead of stdout |
-| `--output json` | emit JSONL to stdout (the default format) |
+| `--out <file>` | write matching records to a file (atomic) instead of stdout; its directory must already exist |
+| `--output <fmt>` | `json` or `jsonl` (JSON lines either way, the default); anything else is an error, use `--out FILE` to write a file |
+| `-h`, `--help` | show the usage and exit |
+
+`--count` cannot be combined with `--out` (it prints a number, not records); the combination is rejected before anything is opened.
 
 ---
 
@@ -106,6 +111,7 @@ Operators: `=` `!=` `>` `>=` `<` `<=` `~=` (contains) `^=` (prefix) `$=` (suffix
 - Files are loaded in full (JSONL files are small by design); no streaming.
 - Deletes target a record by its line in the file and rewrite atomically.
 - Clipboard yank currently uses `pbcopy` (macOS); on other platforms `y` reports that the clipboard is unavailable.
+- Columns whose own name contains a dot (`{"a.b": 1}`): lazyjsonl displays them and feeds them to stats, histogram, scatter and time series, but sorting, grouping, group measures / bar-chart values and diving into objects under such a column need jsonldb support (its sort, query DSL and aggregates always split names on dots), so `s` keeps jsonldb's order, and `f`/`F`/`a`/dive refuse with a status message. If a record has both a top-level `a.b` and a nested `a` -> `b`, the table shows the top-level value while sort and filter (jsonldb) use the nested one.
 
 ---
 

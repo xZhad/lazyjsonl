@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
@@ -49,6 +50,9 @@ func clip(s string, n int) string {
 	}
 	return ansi.Truncate(s, n, "…")
 }
+
+// oneLine flattens an error/status message to a single clipped line.
+func oneLine(s string) string { return clip(strings.Join(strings.Fields(s), " "), 120) }
 
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
@@ -300,13 +304,7 @@ func (m *Model) tablePane(w, h int, active bool) string {
 // cellValue resolves a column's value for a row and the style to draw it in
 // (numbers cyan, booleans green/red, null dim, objects/arrays yellow).
 func cellValue(d jsonldb.Doc, col string) (string, lipgloss.Style) {
-	var raw any
-	var ok bool
-	if strings.Contains(col, ".") {
-		raw, ok = d.Path(col)
-	} else {
-		raw, ok = d.Get(col)
-	}
+	raw, ok := docValue(d, col)
 	if !ok {
 		return "", styleText // key absent → blank cell
 	}
@@ -327,13 +325,7 @@ func cellValue(d jsonldb.Doc, col string) (string, lipgloss.Style) {
 // case stays uncluttered); typed columns get a cue.
 func (m *Model) colGlyph(c string) string {
 	for _, d := range m.pageRows() {
-		var v any
-		var ok bool
-		if strings.Contains(c, ".") {
-			v, ok = d.Path(c)
-		} else {
-			v, ok = d.Get(c)
-		}
+		v, ok := docValue(d, c)
 		if !ok || v == nil {
 			continue
 		}
@@ -412,13 +404,7 @@ func isDateString(s string) bool {
 
 // docFloat extracts a numeric value at field (plain or dotted) from a doc.
 func docFloat(d jsonldb.Doc, field string) (float64, bool) {
-	var v any
-	var ok bool
-	if strings.Contains(field, ".") {
-		v, ok = d.Path(field)
-	} else {
-		v, ok = d.Get(field)
-	}
+	v, ok := docValue(d, field)
 	if !ok {
 		return 0, false
 	}
@@ -439,6 +425,15 @@ func docFloat(d jsonldb.Doc, field string) (float64, bool) {
 // fmtNum formats a float without trailing zeros.
 func fmtNum(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// statNum formats a stats value like a table cell: plain digits below 1e15,
+// exponent form above, then through the exact formatter.
+func statNum(f float64) string {
+	if math.Abs(f) < 1e15 {
+		return prettyNumber(fmtNum(f))
+	}
+	return prettyNumber(strconv.FormatFloat(f, 'g', -1, 64))
 }
 
 // sparkBar renders integer counts as a row of block glyphs (a mini histogram).
@@ -466,11 +461,11 @@ func (m *Model) renderStats(w, h int) string {
 	b.WriteString(gradientRule(34) + "\n")
 	rows := [][2]string{
 		{"count", fmt.Sprintf("%d", s.count)},
-		{"min", thousands(s.min)},
-		{"max", thousands(s.max)},
-		{"sum", thousands(s.sum)},
-		{"mean", thousands(s.mean)},
-		{"median", thousands(s.median)},
+		{"min", statNum(s.min)},
+		{"max", statNum(s.max)},
+		{"sum", statNum(s.sum)},
+		{"mean", statNum(s.mean)},
+		{"median", statNum(s.median)},
 	}
 	for _, kv := range rows {
 		b.WriteString(styleKey.Render(cell(kv[0], 9)) + styleNum.Render(kv[1]) + "\n")
@@ -569,6 +564,33 @@ func (m *Model) numericColumns() []string {
 	return out
 }
 
+// dottedTopLevel reports whether key is a top-level key whose own name contains
+// a dot in any row of the current page. jsonldb's Sum/Avg/GroupBy/Path split
+// names on dots, so they cannot address such a column.
+func (m *Model) dottedTopLevel(key string) bool {
+	if !strings.Contains(key, ".") {
+		return false
+	}
+	for _, d := range m.pageRows() {
+		if d.Has(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// measureColumns are the numeric columns jsonldb's aggregates can address
+// (group measure and bar-chart value); numericColumns minus dotted top-level keys.
+func (m *Model) measureColumns() []string {
+	var out []string
+	for _, c := range m.numericColumns() {
+		if !m.dottedTopLevel(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (m *Model) dateColumns() []string {
 	var out []string
 	for _, c := range m.activeColumns() {
@@ -584,13 +606,7 @@ func (m *Model) dateColumns() []string {
 
 // docTime parses a timestamp at field (plain or dotted) using the date layouts.
 func docTime(d jsonldb.Doc, field string) (time.Time, bool) {
-	var v any
-	var ok bool
-	if strings.Contains(field, ".") {
-		v, ok = d.Path(field)
-	} else {
-		v, ok = d.Get(field)
-	}
+	v, ok := docValue(d, field)
 	s, isStr := v.(string)
 	if !ok || !isStr {
 		return time.Time{}, false
@@ -841,13 +857,7 @@ func (m *Model) buildTimeSeries(w, h int) string {
 
 // cellText returns a column's value as a plain string (for cross-tab keys).
 func (m *Model) cellText(d jsonldb.Doc, col string) string {
-	var v any
-	var ok bool
-	if strings.Contains(col, ".") {
-		v, ok = d.Path(col)
-	} else {
-		v, ok = d.Get(col)
-	}
+	v, ok := docValue(d, col)
 	if !ok {
 		return ""
 	}
@@ -941,7 +951,7 @@ func (m *Model) displayText(d jsonldb.Doc, col string) string {
 	if !m.pretty {
 		return txt
 	}
-	raw, ok := docRaw(d, col)
+	raw, ok := docValue(d, col)
 	if !ok {
 		return txt
 	}
@@ -964,8 +974,7 @@ func toFloat(v any) (float64, bool) {
 func prettyText(col string, raw any, fallback string) string {
 	switch x := raw.(type) {
 	case json.Number, float64:
-		f, _ := toFloat(raw)
-		return formatNumberCol(col, f)
+		return formatNumberCol(col, raw)
 	case string:
 		if isDateString(x) {
 			return relTime(x)
@@ -974,7 +983,8 @@ func prettyText(col string, raw any, fallback string) string {
 	return fallback
 }
 
-func formatNumberCol(col string, f float64) string {
+func formatNumberCol(col string, v any) string {
+	f, _ := toFloat(v)
 	lc := strings.ToLower(col)
 	switch {
 	case strings.HasSuffix(lc, "_ms") || strings.Contains(lc, "latency") || strings.Contains(lc, "millis"):
@@ -985,9 +995,12 @@ func formatNumberCol(col string, f float64) string {
 		return humanDur(f * 60000)
 	case strings.Contains(lc, "bytes") || strings.HasSuffix(lc, "_size") || lc == "size":
 		return humanBytes(f)
-	default:
-		return thousands(f)
 	}
+	if x, ok := v.(float64); ok {
+		return prettyNumber(strconv.FormatFloat(x, 'f', -1, 64))
+	}
+	n, _ := v.(json.Number)
+	return prettyNumber(string(n))
 }
 
 func humanDur(ms float64) string {
@@ -1016,31 +1029,79 @@ func humanBytes(n float64) string {
 	return fmt.Sprintf("%.1f %s", n, units[i])
 }
 
-// thousands groups the integer part with commas (keeps up to 2 decimals).
-func thousands(f float64) string {
-	neg := f < 0
-	if neg {
-		f = -f
+// groupDigits inserts commas into an integer's decimal digits (optional sign).
+func groupDigits(s string) string {
+	sign, digits := "", strings.TrimPrefix(s, "-")
+	if digits != s {
+		sign = "-"
 	}
-	whole := int64(f)
-	frac := ""
-	if f != math.Trunc(f) {
-		frac = strings.TrimRight(fmt.Sprintf("%.2f", f-float64(whole)), "0")
-		frac = strings.TrimPrefix(frac, "0") // ".25"
-	}
-	s := fmt.Sprintf("%d", whole)
 	var out []byte
-	for i, c := range []byte(s) {
-		if i > 0 && (len(s)-i)%3 == 0 {
+	for i := range len(digits) {
+		if i > 0 && (len(digits)-i)%3 == 0 {
 			out = append(out, ',')
 		}
-		out = append(out, c)
+		out = append(out, digits[i])
 	}
-	res := string(out) + frac
-	if neg {
-		res = "-" + res
+	return sign + string(out)
+}
+
+// numRe is the JSON number grammar: sign, integer, optional fraction/exponent.
+var numRe = regexp.MustCompile(`^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE][+-]?\d+)?$`)
+
+// prettyNumber formats a JSON number's text for display: grouped integer part,
+// at most 2 decimals (half-up, exact on the digit string, no float arithmetic),
+// trailing zeros trimmed. A non-zero value that would round to 0 keeps 3
+// significant digits instead of silently showing "0". Exponent forms are
+// expanded when 1e-4 <= |f| < 1e15, otherwise shown with 4 significant digits.
+// Anything that is not a plain JSON number comes back unchanged.
+func prettyNumber(s string) string {
+	m := numRe.FindStringSubmatch(s)
+	if m == nil {
+		return s
 	}
-	return res
+	sign, ints, frac := m[1], m[2], m[3]
+	nonZero := strings.Trim(ints+frac, "0") != ""
+	if strings.ContainsAny(s, "eE") {
+		f, err := strconv.ParseFloat(s, 64)
+		switch {
+		case err != nil || math.IsInf(f, 0):
+			return s
+		case f == 0 && nonZero:
+			return s // underflows float64 but is not zero: never show "0"
+		case f == 0:
+			return "0"
+		case math.Abs(f) < 1e-4 || math.Abs(f) >= 1e15:
+			return strconv.FormatFloat(f, 'g', 4, 64)
+		}
+		return prettyNumber(strconv.FormatFloat(f, 'f', -1, 64))
+	}
+	if !nonZero {
+		return "0" // no negative zero
+	}
+	if frac == "" {
+		return groupDigits(s)
+	}
+	digits := []byte(ints + (frac + "00")[:2]) // integer and 2 decimals as one digit string
+	if len(frac) > 2 && frac[2] >= '5' {
+		i := len(digits) - 1
+		for ; i >= 0 && digits[i] == '9'; i-- {
+			digits[i] = '0'
+		}
+		if i < 0 {
+			digits = append([]byte{'1'}, digits...)
+		} else {
+			digits[i]++
+		}
+	}
+	whole, dec := string(digits[:len(digits)-2]), strings.TrimRight(string(digits[len(digits)-2:]), "0")
+	if whole == "0" && dec == "" {
+		f, _ := strconv.ParseFloat(s, 64)
+		return strconv.FormatFloat(f, 'g', 3, 64)
+	}
+	if dec != "" {
+		dec = "." + dec
+	}
+	return sign + groupDigits(whole) + dec
 }
 
 // relTime renders a timestamp string as a relative age ("3h", "2d", "5mo").
@@ -1091,7 +1152,9 @@ type diffRow struct {
 
 func rawMap(d jsonldb.Doc) map[string]any {
 	var m map[string]any
-	_ = json.Unmarshal(d.Raw(), &m)
+	dec := json.NewDecoder(bytes.NewReader(d.Raw()))
+	dec.UseNumber() // json.Number prints and compares by its exact text
+	_ = dec.Decode(&m)
 	return m
 }
 
@@ -1167,12 +1230,14 @@ func (m *Model) renderDiff(w, h int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, box, foot)
 }
 
-// docRaw returns a column's raw value (plain or dotted path).
-func docRaw(d jsonldb.Doc, field string) (any, bool) {
-	if strings.Contains(field, ".") {
-		return d.Path(field)
+// docValue resolves a column key against a record: the exact top-level key
+// first (so {"a.b": 5} is found), then a dotted path into nested objects/arrays.
+// jsonldb's own Path always splits on dots, hence the explicit Get first.
+func docValue(d jsonldb.Doc, key string) (any, bool) {
+	if v, ok := d.Get(key); ok {
+		return v, true
 	}
-	return d.Get(field)
+	return d.Path(key)
 }
 
 // dslLiteral renders a value as a DSL literal (typed for numbers/bools/null,
@@ -1266,27 +1331,50 @@ func scalarStr(v any) string {
 	}
 }
 
+// promptFooter draws a one-line prompt: label, the text input, then a hint or
+// error. The input is sized to its text but never past the room left, so long
+// text scrolls inside it (the textinput keeps the cursor in view) and the
+// footer never wraps; the tail is clipped to what remains after a minimum input.
+func promptFooter(w int, label string, in *textinput.Model, tail string, tailStyle lipgloss.Style) string {
+	const gap, minIn, cursor = 3, 8, 1
+	room := w - lipgloss.Width(label) - cursor
+	if tail != "" {
+		tail = clip(tail, max(room-minIn-gap, 0))
+	}
+	if tail != "" {
+		room -= gap + lipgloss.Width(tail)
+	}
+	if iw := min(max(ansi.StringWidth(in.Value())+cursor, minIn), max(room, minIn)); iw != in.Width() {
+		// SetWidth alone leaves the scroll offsets stale: rebuild them.
+		v, p := in.Value(), in.Position()
+		in.SetValue("")
+		in.SetWidth(iw)
+		in.SetValue(v)
+		in.SetCursor(p)
+	}
+	s := styleKey.Render(label) + in.View()
+	if tail != "" {
+		s += strings.Repeat(" ", gap) + tailStyle.Render(tail)
+	}
+	return styleFooter.Width(w).MaxHeight(1).Render(s)
+}
+
 func (m *Model) renderFooter(w int) string {
 	switch m.mode {
 	case ModeFilter:
-		s := styleKey.Render(" / ") + m.filterInput.View()
 		if m.filterErr != nil {
-			s += "  " + styleDanger.Render(m.filterErr.Error())
+			return promptFooter(w, " / ", &m.filterInput, oneLine(m.filterErr.Error()), styleDanger)
 		}
-		return styleFooter.Width(w).Render(s)
+		return promptFooter(w, " / ", &m.filterInput, "", styleMuted)
 	case ModeFileSearch:
-		s := styleKey.Render(" search ") + m.fileInput.View() +
-			styleMuted.Render("   ↑↓ pick · ↵ open · esc clear")
-		return styleFooter.Width(w).Render(s)
+		return promptFooter(w, " search ", &m.fileInput, "↑↓ pick · ↵ open · esc clear", styleMuted)
 	case ModeJump:
-		s := styleKey.Render(" jump to # ") + m.jumpInput.View() +
-			styleMuted.Render(fmt.Sprintf("   1–%d · ↵ go · esc cancel", m.result.Count()))
-		return styleFooter.Width(w).Render(s)
+		return promptFooter(w, " jump to # ", &m.jumpInput, fmt.Sprintf("1–%d · ↵ go · esc cancel", m.result.Count()), styleMuted)
 	case ModeConfirm:
 		if d, ok := m.selectedDoc(); ok {
 			s := " " + styleDanger.Render(fmt.Sprintf("delete record on line %d?", d.Line())) +
 				"  " + styleKey.Render("y") + styleMuted.Render("es / ") + styleKey.Render("n") + styleMuted.Render("o")
-			return styleFooter.Width(w).Render(s)
+			return styleFooter.Width(w).Render(clip(s, w))
 		}
 	}
 	m.help.Styles = helpStyles(cBar)
@@ -1399,15 +1487,13 @@ func (m *Model) renderDetail(w, h int) string {
 		lines = append(lines, content+sc)
 	}
 	box := pane(true).Width(w).Height(h - 1).MaxHeight(h - 1).Render(strings.Join(lines, "\n"))
-	var hint string
+	var footer string
 	if m.mode == ModeDetailSearch {
-		hint = styleKey.Render(" find ") + m.detailInput.View() +
-			styleMuted.Render("   ↵ keep · esc clear")
+		footer = promptFooter(w, " find ", &m.detailInput, "↵ keep · esc clear", styleMuted)
 	} else {
-		hint = " " + keyHint("j/k", "scroll") + keyHint("/", "find") + keyHint("n/N", "next/prev") +
-			keyHint("g/G", "top/end") + keyHint("esc", "back") + keyHint("q", "quit")
+		footer = styleFooter.Width(w).Render(clip(" "+keyHint("j/k", "scroll")+keyHint("/", "find")+keyHint("n/N", "next/prev")+
+			keyHint("g/G", "top/end")+keyHint("esc", "back")+keyHint("q", "quit"), w))
 	}
-	footer := styleFooter.Width(w).Render(hint)
 	return lipgloss.JoinVertical(lipgloss.Left, box, footer)
 }
 

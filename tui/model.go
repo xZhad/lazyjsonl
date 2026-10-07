@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -314,6 +316,24 @@ func (m *Model) activeColumns() []string {
 		return m.columns
 	}
 	return m.visibleColumns(m.defaultCap)
+}
+
+// yankText is what Y copies: compact JSON for a nested value, otherwise the
+// cell text as displayed.
+func yankText(d jsonldb.Doc, col string) string {
+	if raw, ok := docValue(d, col); ok {
+		switch raw.(type) {
+		case map[string]any, []any:
+			var b bytes.Buffer
+			enc := json.NewEncoder(&b)
+			enc.SetEscapeHTML(false)
+			if enc.Encode(raw) == nil {
+				return strings.TrimSpace(b.String())
+			}
+		}
+	}
+	txt, _ := cellValue(d, col)
+	return txt
 }
 
 func copyToClipboard(b []byte) error {
@@ -682,8 +702,7 @@ func (m *Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if d, ok := m.selectedDoc(); ok {
 			cols := m.activeColumns()
 			if m.colCursor < len(cols) {
-				txt, _ := cellValue(d, cols[m.colCursor])
-				if err := copyToClipboard([]byte(txt)); err != nil {
+				if err := copyToClipboard([]byte(yankText(d, cols[m.colCursor]))); err != nil {
 					m.status = "clipboard unavailable"
 				} else {
 					m.status = "yanked cell"
@@ -1117,13 +1136,7 @@ func (m *Model) unionSubkeys(keyPath string) []string {
 	seen := map[string]bool{}
 	var subkeys []string
 	for _, d := range m.pageRows() {
-		var val any
-		var ok bool
-		if strings.Contains(keyPath, ".") {
-			val, ok = d.Path(keyPath)
-		} else {
-			val, ok = d.Get(keyPath)
-		}
+		val, ok := docValue(d, keyPath)
 		if !ok {
 			continue
 		}
@@ -1149,6 +1162,10 @@ func (m *Model) drillInto() {
 		return
 	}
 	key := cols[m.colCursor]
+	if m.dottedTopLevel(key) {
+		m.status = "can't dive into a column whose name contains '.' (needs jsonldb support)"
+		return
+	}
 	subkeys := m.unionSubkeys(key)
 	if len(subkeys) == 0 {
 		m.status = "not a nested object"
@@ -1335,6 +1352,10 @@ func (m *Model) openStats(field string) {
 // openGroup groups the current result by field (distinct value → subset) and
 // opens the group view, counts only, sorted by count desc.
 func (m *Model) openGroup(field string) {
+	if m.dottedTopLevel(field) {
+		m.status = "can't group by a column whose name contains '.' (needs jsonldb support)"
+		return
+	}
 	groups := m.result.GroupBy(field)
 	rows := make([]groupRow, 0, len(groups))
 	for k, res := range groups {
@@ -1351,7 +1372,7 @@ func (m *Model) openGroup(field string) {
 
 // groupMeasureCol returns the active numeric measure column, or "" for none.
 func (m *Model) groupMeasureCol() string {
-	nums := m.numericColumns()
+	nums := m.measureColumns()
 	if m.groupMeasIdx < 0 || m.groupMeasIdx >= len(nums) {
 		return ""
 	}
@@ -1406,7 +1427,7 @@ func (m *Model) updateGroup(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.chartStep = 1 // land on the Measure picker, then render
 		m.mode = ModeChart
 	case "m": // cycle measure column: none → each numeric column → none
-		nums := m.numericColumns()
+		nums := m.measureColumns()
 		m.groupMeasIdx++
 		if m.groupMeasIdx >= len(nums) {
 			m.groupMeasIdx = -1
@@ -1499,7 +1520,12 @@ func (m *Model) filterFromCell(exclude bool) {
 		return
 	}
 	field := cols[m.colCursor]
-	raw, ok := docRaw(d, field)
+	if d.Has(field) && strings.Contains(field, ".") {
+		// jsonldb's query DSL always splits on dots, so it can't see this key
+		m.status = "can't filter on a column whose name contains '.'"
+		return
+	}
+	raw, ok := docValue(d, field)
 	if !ok {
 		m.status = "no value to filter"
 		return
@@ -1562,7 +1588,7 @@ func (m *Model) chartNextPrompt() (title string, items []string, need bool) {
 			if p[1] == "count" {
 				return "", nil, false
 			}
-			return "Value column (numeric)", m.numericColumns(), true
+			return "Value column (numeric)", m.measureColumns(), true
 		}
 	case chartLine, chartSparkline:
 		if len(p) == 0 {

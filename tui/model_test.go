@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/xZhad/jsonldb"
 )
 
@@ -1110,5 +1113,271 @@ func TestDiffRecords(t *testing.T) {
 	}
 	if got["only_b"] != 3 {
 		t.Errorf("only_b state = %d, want 3 (only-B)", got["only_b"])
+	}
+}
+
+func TestDiffKeepsBigNumbersExact(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.jsonl"), []byte(
+		`{"id":1,"h":170141183460469231731687303715884105727,"d":1234567890123456.789,"b":9007199254740993}
+{"id":2,"h":170141183460469231731687303715884105726,"d":1234567890123456.788,"b":9007199254740992}
+`), 0644)
+	m, _ := New(dir)
+	defer m.col.Close()
+	m = send(m, tea.WindowSizeMsg{Width: 200, Height: 20})
+	m.focus = FocusTable
+	m.cursor = 0
+	m = send(m, kp('x'))
+	m.cursor = 1
+	m = send(m, kp('x'))
+	if m.mode != ModeDiff {
+		t.Fatalf("mode = %v", m.mode)
+	}
+	got := map[string][2]string{}
+	for _, r := range diffRecords(m.diffA, m.diffB) {
+		got[r.key] = [2]string{r.a, r.b}
+	}
+	for k, want := range map[string][2]string{
+		"h": {"170141183460469231731687303715884105727", "170141183460469231731687303715884105726"},
+		"d": {"1234567890123456.789", "1234567890123456.788"},
+		"b": {"9007199254740993", "9007199254740992"},
+	} {
+		if got[k] != want {
+			t.Errorf("diff %s = %v, want %v", k, got[k], want)
+		}
+	}
+	out := ansi.Strip(m.View().Content)
+	if !strings.Contains(out, "4 field(s) differ") { // id, h, d, b
+		t.Errorf("want 4 differing fields:\n%s", out)
+	}
+	if !strings.Contains(out, "1234567890123456.789") || !strings.Contains(out, "1234567890123456.788") {
+		t.Errorf("decimal digits missing from the diff view:\n%s", out)
+	}
+}
+
+// dottedModel opens records whose top-level keys contain dots ("a.b") next to a
+// genuinely nested one.
+func dottedModel(t *testing.T) *Model {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "d.jsonl"), []byte(
+		`{"a.b":5,"c":1,"w":10,"t.s":"2026-01-02","o.p":{"x":1},"n":{"m":9}}
+{"a.b":7,"c":2,"w":20,"t.s":"2026-01-03","o.p":{"y":2},"n":{"m":8}}
+{"a.b":6,"c":1,"w":30,"t.s":"2026-01-04","o.p":{"x":3},"n":{"m":7}}
+`), 0644)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.col.Close() })
+	m = send(m, tea.WindowSizeMsg{Width: 100, Height: 20})
+	m.focus = FocusTable
+	return m
+}
+
+// A top-level key with a dot in its own name must show up everywhere a plain key does.
+func TestDottedTopLevelKeyDisplays(t *testing.T) {
+	m := dottedModel(t)
+	d := m.pageRows()[0]
+	if txt, st := cellValue(d, "a.b"); txt != "5" || st.Render("x") != styleNum.Render("x") {
+		t.Errorf("cellValue(a.b) = %q (num style %v), want 5", txt, st.Render("x") == styleNum.Render("x"))
+	}
+	if g := m.colGlyph("a.b"); g != "#" {
+		t.Errorf("colGlyph(a.b) = %q, want #", g)
+	}
+	if f, ok := docFloat(d, "a.b"); !ok || f != 5 {
+		t.Errorf("docFloat(a.b) = %v %v, want 5", f, ok)
+	}
+	if ts, ok := docTime(d, "t.s"); !ok || ts.Day() != 2 {
+		t.Errorf("docTime(t.s) = %v %v", ts, ok)
+	}
+	if raw, ok := docValue(d, "a.b"); !ok || raw.(json.Number) != "5" {
+		t.Errorf("docValue(a.b) = %v %v", raw, ok)
+	}
+	if got := m.cellText(d, "a.b"); got != "5" {
+		t.Errorf("cellText(a.b) = %q, want 5", got)
+	}
+	if got := m.displayText(d, "a.b"); got != "5" {
+		t.Errorf("displayText(a.b) = %q, want 5", got)
+	}
+	if got := m.unionSubkeys("o.p"); !slices.Equal(got, []string{"x", "y"}) {
+		t.Errorf("unionSubkeys(o.p) = %v, want [x y]", got)
+	}
+	// stats reads the values through docFloat, so it works on a dotted column
+	m.openStats("a.b")
+	if m.mode != ModeStats || m.stats.count != 3 || m.stats.sum != 18 {
+		t.Errorf("stats(a.b) mode=%v %+v", m.mode, m.stats)
+	}
+	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "a.b") {
+		t.Errorf("stats popup does not show the column:\n%s", out)
+	}
+}
+
+// Normal nested paths keep working, and an exact top-level key wins over a path.
+func TestDottedKeyFallsBackToNestedPath(t *testing.T) {
+	m := dottedModel(t)
+	d := m.pageRows()[0]
+	if txt, _ := cellValue(d, "n.m"); txt != "9" {
+		t.Errorf("cellValue(n.m) = %q, want 9 (nested path)", txt)
+	}
+	if txt, _ := cellValue(d, "n.zz"); txt != "" {
+		t.Errorf("cellValue(n.zz) = %q, want blank", txt)
+	}
+	both := jsonldb.NewDoc(map[string]any{"a.b": "flat", "a": map[string]any{"b": "nested"}})
+	if v, _ := docValue(both, "a.b"); v != "flat" {
+		t.Errorf("docValue with both = %v, want flat (exact key first)", v)
+	}
+	if v, ok := docValue(both, "zzz"); ok || v != nil {
+		t.Errorf("docValue(missing) = %v %v", v, ok)
+	}
+}
+
+// jsonldb's sort and query DSL always split on dots, so they cannot see a
+// top-level dotted key; lazyjsonl must not crash and must not build a filter
+// that silently matches nothing.
+func TestDottedKeySortAndFilterAreSafe(t *testing.T) {
+	m := dottedModel(t)
+	m.colCursor, m.cursor = 0, 0 // a.b, first row
+	if cols := m.activeColumns(); cols[0] != "a.b" {
+		t.Fatalf("columns = %v, want a.b first", cols)
+	}
+	before := rowIDs(m, "c")
+	m = send(m, kp('s')) // jsonldb cannot sort by it: keeps its order, no panic
+	if got := rowIDs(m, "c"); !slices.Equal(got, before) || strings.Contains(m.status, "can't") {
+		t.Errorf("sort on a dotted column: rows %v (was %v), status %q; want unchanged order and no refusal", got, before, m.status)
+	}
+	m.status = ""
+	m = send(m, kp('f'))
+	if m.filter != "" || m.result.Count() != 3 || !strings.Contains(m.status, "name contains '.'") {
+		t.Errorf("f on a dotted column: filter=%q count=%d status=%q, want refusal", m.filter, m.result.Count(), m.status)
+	}
+	m.status = ""
+	m = send(m, kp('F'))
+	if m.filter != "" || !strings.Contains(m.status, "name contains '.'") {
+		t.Errorf("F on a dotted column: filter=%q status=%q, want refusal", m.filter, m.status)
+	}
+	// a nested column ("n.m") is still filterable
+	m.colCursor = slices.Index(m.activeColumns(), "n")
+	m = send(m, kp(' ')) // dive into n -> n.m
+	m.colCursor, m.cursor = 0, 0
+	m = send(m, kp('f'))
+	if m.filter != "n.m=9" || m.result.Count() != 1 {
+		t.Errorf("f on nested n.m: filter=%q count=%d status=%q, want n.m=9/1", m.filter, m.result.Count(), m.status)
+	}
+}
+
+func TestYankText(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "y.jsonl"), []byte(
+		`{"customer":{"name":"c1","tier":"pro"},"tags":["a","b"],"q":"<&>","n":5,"ok":true,"z":null,"big":9007199254740993,"obj":{"h":"<&>","big":9007199254740993},"x.y":{"k":1},"e1":{},"e2":[]}`+"\n"), 0644)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.col.Close()
+	row := m.pageRows()[0]
+	for col, want := range map[string]string{
+		"customer":      `{"name":"c1","tier":"pro"}`, // nested: compact JSON, not Go's map[...]
+		"customer.tier": "pro",                        // dive path: a string, raw
+		"tags":          `["a","b"]`,
+		"obj":           `{"big":9007199254740993,"h":"<&>"}`, // exact numbers, no HTML escaping
+		"x.y":           `{"k":1}`,                            // dotted top-level key holding an object
+		"q":             "<&>",
+		"n":             "5",
+		"ok":            "✓", // scalars: the displayed text, as before
+		"z":             "∅",
+		"big":           "9007199254740993",
+		"e1":            "{}",
+		"e2":            "[]",
+		"missing":       "",
+	} {
+		if got := yankText(row, col); got != want {
+			t.Errorf("yankText(%q) = %q, want %q", col, got, want)
+		}
+	}
+}
+
+// rowIDs lists a column's displayed text for the current page, in order.
+func rowIDs(m *Model, col string) []string {
+	var out []string
+	for _, d := range m.pageRows() {
+		txt, _ := cellValue(d, col)
+		out = append(out, txt)
+	}
+	return out
+}
+
+// jsonldb's Sum/Avg/Min/Max split names on dots, so a top-level dotted column
+// must not be offered as a group measure or bar-chart value (it would show 0s).
+func TestDottedKeyNotOfferedAsMeasure(t *testing.T) {
+	m := dottedModel(t)
+	m.openGroup("c")
+	if m.mode != ModeGroup {
+		t.Fatalf("mode = %v, want ModeGroup", m.mode)
+	}
+	var offered []string
+	for range 8 { // cycle m through every candidate and back to none
+		m = send(m, kp('m'))
+		if col := m.groupMeasureCol(); col != "" {
+			offered = append(offered, col)
+		}
+	}
+	if slices.Contains(offered, "a.b") || !slices.Contains(offered, "w") || !slices.Contains(offered, "c") {
+		t.Errorf("group measures offered = %v, want w and c but not a.b", offered)
+	}
+	for m.groupMeasureCol() != "w" {
+		m = send(m, kp('m'))
+	}
+	for _, g := range m.groupRows { // group c=1 holds w=10 and w=30
+		if g.key == "1" && g.sum != 40 {
+			t.Errorf("sum(w) for c=1 = %v, want 40", g.sum)
+		}
+	}
+	// bar chart value picker
+	m.chartType, m.chartPicks = chartBar, []string{"c", "sum"}
+	_, items, need := m.chartNextPrompt()
+	if !need || slices.Contains(items, "a.b") || !slices.Contains(items, "w") {
+		t.Errorf("bar value column items = %v (need %v), want w but not a.b", items, need)
+	}
+	// histogram/scatter/line pickers still offer it (they read values through docFloat)
+	m.chartType, m.chartPicks = chartScatter, nil
+	if _, items, _ := m.chartNextPrompt(); !slices.Contains(items, "a.b") {
+		t.Errorf("scatter X items = %v, want a.b offered", items)
+	}
+}
+
+// Group-by on a column jsonldb can't address by its dotted name refuses with a
+// message instead of grouping every row under "" (and later filtering a.b="").
+func TestDottedKeyGroupRefuses(t *testing.T) {
+	m := dottedModel(t)
+	cols := m.activeColumns()
+	m.colCursor, m.cursor = slices.Index(cols, "a.b"), 0
+	m = send(m, kp('a'))
+	if m.mode != ModeList || m.filter != "" || !strings.Contains(m.status, "can't group by a column whose name contains '.'") {
+		t.Errorf("a on a.b: mode=%v filter=%q status=%q, want refusal", m.mode, m.filter, m.status)
+	}
+	// regression: ordinary group-by still works
+	m.colCursor = slices.Index(cols, "c")
+	m = send(m, kp('a'))
+	if m.mode != ModeGroup || len(m.groupRows) != 2 {
+		t.Errorf("a on c: mode=%v groups=%d, want ModeGroup/2", m.mode, len(m.groupRows))
+	}
+}
+
+// Diving into an object under a dotted top-level key would open blank
+// sub-columns (jsonldb's Path splits on dots), so it refuses.
+func TestDottedKeyDiveRefuses(t *testing.T) {
+	m := dottedModel(t)
+	cols := m.activeColumns()
+	m.colCursor, m.cursor = slices.Index(cols, "o.p"), 0
+	m = send(m, kp(' '))
+	if len(m.drillPath) != 0 || !slices.Equal(m.activeColumns(), cols) || !strings.Contains(m.status, "can't dive into a column whose name contains '.'") {
+		t.Errorf("dive on o.p: drillPath=%v columns=%v status=%q, want refusal", m.drillPath, m.activeColumns(), m.status)
+	}
+	// regression: a normal nested object still dives
+	m.colCursor = slices.Index(cols, "n")
+	m = send(m, kp(' '))
+	if !slices.Equal(m.activeColumns(), []string{"n.m"}) {
+		t.Errorf("dive on n: columns = %v, want [n.m]", m.activeColumns())
 	}
 }

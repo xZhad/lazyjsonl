@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,44 @@ func TestParseArgsExtraPositional(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "unexpected argument") {
 		t.Errorf("error should mention 'unexpected argument', got: %v", err)
+	}
+}
+
+func TestParseArgsHelp(t *testing.T) {
+	for _, a := range []string{"-h", "--help"} {
+		if _, _, err := parseArgs([]string{"data.jsonl", a}); !errors.Is(err, errHelp) {
+			t.Errorf("%s: err = %v, want errHelp", a, err)
+		}
+	}
+}
+
+func TestUsageMentionsEverything(t *testing.T) {
+	for _, want := range []string{
+		"--filter", "--count", "--out", "--output", "--help", "-h",
+		"file", "folder", "completed=true", "TUI", "piped", "(TUI only)", "./-name",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage missing %q", want)
+		}
+	}
+}
+
+func TestParseArgsRejectsUnknownDashArgs(t *testing.T) {
+	for _, a := range []string{"-x", "--version", "-", "-h=1", "--nope"} {
+		_, _, err := parseArgs([]string{"data.jsonl", a})
+		if want := "unknown flag: " + a + " (see --help)"; err == nil || err.Error() != want {
+			t.Errorf("%q: err = %v, want %q", a, err, want)
+		}
+	}
+}
+
+func TestParseArgsFlagValuesAreNeverFlags(t *testing.T) {
+	opts, runCLI, err := parseArgs([]string{"data.jsonl", "--filter", "-1 < x", "--out", "-o.jsonl", "--output", "-h"})
+	if err != nil || !runCLI || opts.Filter != "-1 < x" || opts.Out != "-o.jsonl" || opts.Output != "-h" {
+		t.Fatalf("opts = %+v %v %v", opts, runCLI, err)
+	}
+	opts, _, err = parseArgs([]string{"dir/", "weird-file.jsonl"})
+	if err == nil || opts.Path != "dir/" {
+		t.Fatalf("second positional should still be rejected: %+v %v", opts, err)
 	}
 }
